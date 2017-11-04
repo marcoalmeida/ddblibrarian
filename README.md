@@ -73,4 +73,4 @@ are supported.
 
 
 ## Example
-Take a look at [the demo](https://github.com/marcoalmeida/dblibrarian/tree/master/librarian-demo).
+Take a look at [the demo](https://github.com/marcoalmeida/ddblibrarian/tree/master/cmd/demo).
