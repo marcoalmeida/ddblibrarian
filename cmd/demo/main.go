@@ -1,26 +1,3 @@
-// Simple demo of the dynamodb-librarian
-//
-//Expected output:
-//
-//=> Taking initial snapshot, before loading data...
-//=> Loading data into the table...
-//  Pitch Perfect
-//  Epic
-//  The Avengers
-//  Metallica Through the Never
-//  Oblivion
-//=> Movie details:
-//  The Avengers, 2012: {"Directors":["Joss Whedon"],"ReleaseDate":"","Rating":8.2,"Genres":["Action","Fantasy"],"Image":"","Plot":"Nick Fury of S.H.I.E.L.D. assembles a team of superhumans to save the planet from Loki and his army.","Rank":48,"RunningTime":0,"Actors":["Robert Downey Jr.","Chris Evans","Scarlett Johansson"]}
-//=> Taking anoter snapshot, before manual updates...
-//=> Updating movie data...
-//=> Movie details:
-//  The Avengers, 2012: ooops
-//=> Movie details reading explicitely from the initial snapshot:
-//  The Avengers, 2012: {"Directors":["Joss Whedon"],"ReleaseDate":"","Rating":8.2,"Genres":["Action","Fantasy"],"Image":"","Plot":"Nick Fury of S.H.I.E.L.D. assembles a team of superhumans to save the planet from Loki and his army.","Rank":48,"RunningTime":0,"Actors":["Robert Downey Jr.","Chris Evans","Scarlett Johansson"]}
-//=> Rolling back to the initial snapshot...
-//=> Movie details:
-//  The Avengers, 2012: {"Directors":["Joss Whedon"],"ReleaseDate":"","Rating":8.2,"Genres":["Action","Fantasy"],"Image":"","Plot":"Nick Fury of S.H.I.E.L.D. assembles a team of superhumans to save the planet from Loki and his army.","Rank":48,"RunningTime":0,"Actors":["Robert Downey Jr.","Chris Evans","Scarlett Johansson"]}
-
 package main
 
 import (
@@ -159,7 +136,7 @@ func connect() (*librarian.Library, error) {
 }
 
 func loadData(keeper *librarian.Library, movies []movie) {
-	fmt.Println("Loading movie data...")
+	fmt.Println("Loading movie data...\n")
 	for _, m := range movies {
 		jsonData, err := json.Marshal(m.Info)
 		if err != nil {
@@ -217,7 +194,7 @@ func showItemFromSnapshot(record *librarian.Library, snapshot string) {
 
 func demo(record *librarian.Library) {
 	// show the initial data for 'The Avengers'
-	fmt.Println("=> Movie details:")
+	fmt.Println("=> Movie details -- active entry")
 	showItem(record)
 	fmt.Println()
 
@@ -227,7 +204,7 @@ func demo(record *librarian.Library) {
 	fmt.Println()
 
 	// accidentally destroys The Avengers
-	fmt.Println("=> Updating movie data...")
+	fmt.Println("=> Updating movie data (i.e., introducing errors)...")
 	record.PutItem(&dynamodb.PutItemInput{
 		TableName: aws.String(tableName),
 		Item: map[string]*dynamodb.AttributeValue{
@@ -239,12 +216,12 @@ func demo(record *librarian.Library) {
 	fmt.Println()
 
 	// show the mess
-	fmt.Println("=> Movie details (most recent entry):")
+	fmt.Println("=> Movie details -- active entry")
 	showItem(record)
 	fmt.Println()
 
 	// use GetItemFromSnapshot to show that we still have the data saved from `initial-load`
-	fmt.Println("=> Movie details (before the snapshot):")
+	fmt.Println("=> Movie details -- from the snapshot")
 	showItemFromSnapshot(record, "")
 	fmt.Println()
 
@@ -254,7 +231,7 @@ func demo(record *librarian.Library) {
 	fmt.Println()
 
 	// plain GetItem retrieves the good data
-	fmt.Println("=> Movie details:")
+	fmt.Println("=> Movie details -- active entry")
 	showItem(record)
 }
 
