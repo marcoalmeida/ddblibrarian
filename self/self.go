@@ -75,8 +75,8 @@ type config struct {
 }
 
 // New creates a new instance for querying and managing snapshot-related metadata.
-// It caches data locally. If consistency is important, create one instance per operation
-// instead of trying to reuse it for long periods of time.
+// It caches data locally. If consistency is important, create one instance per operation instead of trying to reuse
+// it for long periods of time.
 func New(
 	svc *dynamodb.DynamoDB,
 	tableName string,
@@ -97,8 +97,7 @@ func New(
 		chronologicalSnapshotIDs: make([]string, 0),
 	}
 
-	// store local copies of the snapshot_name -> snapshot_id map and the
-	// chronologically sorted list of snapshot IDs
+	// store local copies of the snapshot_name -> snapshot_id map and the chronologically sorted list of snapshot IDs
 	err := data.cacheAllMetadata()
 	if err != nil {
 		return nil, errors.New("failed to cache metadata: " + err.Error())
@@ -131,8 +130,8 @@ func (s *config) Snapshot(snapshot string) (string, error) {
 		S: aws.String(newID),
 	}
 
-	// update the ordered list of existing snapshots (IDs of the snapshots)
-	// new ID to the front because we always start with the most recent snapshot
+	// update the ordered list of existing snapshots (IDs of the snapshots) new ID to the front because we always
+	// start with the most recent snapshot
 	s.chronologicalSnapshotIDs = append([]string{newID}, s.chronologicalSnapshotIDs...)
 	// different data type for DynamoDB
 	ids := []*dynamodb.AttributeValue{}
@@ -154,12 +153,13 @@ func (s *config) Snapshot(snapshot string) (string, error) {
 			":latestID":   {S: aws.String(newID)},
 			":orderedIDs": {L: ids},
 		},
-		UpdateExpression: aws.String("SET #snapshots=:snapshots, #latestID=:latestID, #currentID=:latestID, #orderedIDs=:orderedIDs"),
+		UpdateExpression: aws.String(
+			`SET #snapshots=:snapshots, #latestID=:latestID, #currentID=:latestID, #orderedIDs=:orderedIDs`,
+			),
 	}
 
-	// use a conditional update to avoid race conditions
-	// update the metadata iff the the latest snapshotID has not changed, i.e.,
-	// there were no other snapshots were taken concurrently
+	// use a conditional update to avoid race conditions update the metadata iff the the latest snapshotID has not
+	// changed, i.e., there were no other snapshots were taken concurrently
 	if s.latestSnapshotID != "" {
 		item.ExpressionAttributeValues[":previousLatestID"] = &dynamodb.AttributeValue{
 			S: aws.String(s.latestSnapshotID)}
@@ -182,8 +182,7 @@ func (s *config) Rollback(snapshot string) (string, error) {
 		return "", errors.New(fmt.Sprintf("snapshot '%s' does not exist", snapshot))
 	}
 
-	// DynamoDB does not support empty strings so rolling back
-	// to "" == before any snapshots => remove the key
+	// DynamoDB does not support empty strings so rolling back to "" == before any snapshots => remove the key
 	if snapshot != "" {
 		id, err = s.GetSnapshotID(snapshot)
 		if err != nil {
@@ -206,9 +205,9 @@ func (s *config) Rollback(snapshot string) (string, error) {
 		}
 	}
 
-	// use a conditional update to avoid race conditions
-	// update the metadata iff the the current snapshotID has not changed, i.e.,
-	// there were no other rollbacks happening concurrently
+	// use a conditional update to avoid race conditions;
+	// update the metadata iff the the current snapshotID has not changed, i.e., there were no other rollbacks
+	// happening concurrently
 	if s.currentSnapshotID != "" {
 		if item.ExpressionAttributeValues == nil {
 			item.ExpressionAttributeValues = make(map[string]*dynamodb.AttributeValue, 0)
@@ -238,9 +237,8 @@ func (s *config) GetChronologicalSnapshotIDs(first string) []string {
 	// special cases
 	switch first {
 	case "":
-		// just to avoid unnecessary loops as a minor performance improvement
-		// this really means "none" because there are no snapshots before the
-		// first one was even taken
+		// just to avoid unnecessary loops as a minor performance improvement this really means "none" because there
+		// are no snapshots before the first one was even taken
 		return []string{""}
 	case SNAPSHOT_LATEST:
 		first = s.latestSnapshotID
@@ -269,8 +267,7 @@ func (s *config) GetSnapshotID(snapshot string) (string, error) {
 	// special cases
 	switch snapshot {
 	case "":
-		// empty string means no snapshot (before any were created), the corresponding ID
-		// is also an empty string
+		// empty string means no snapshot (before any were created), the corresponding ID is also an empty string
 		return "", nil
 	case SNAPSHOT_LATEST:
 		return s.latestSnapshotID, nil
