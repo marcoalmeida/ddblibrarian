@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 
-	"github.com/marcoalmeida/dynamodb-librarian"
+	"github.com/marcoalmeida/ddblibrarian"
 )
 
 const (
@@ -121,7 +121,7 @@ func readData() ([]movie, error) {
 	return movies, nil
 }
 
-func connect() (*librarian.Library, error) {
+func connect() (*ddblibrarian.Library, error) {
 	ddbSession, err := session.NewSession(&aws.Config{
 		Region:     aws.String(region),
 		Endpoint:   aws.String(endpoint),
@@ -132,10 +132,10 @@ func connect() (*librarian.Library, error) {
 		return nil, err
 	}
 
-	return librarian.New(tableName, partitionKey, partitionKeyType, rangeKey, rangeKeyType, ddbSession)
+	return ddblibrarian.New(tableName, partitionKey, partitionKeyType, rangeKey, rangeKeyType, ddbSession)
 }
 
-func loadData(keeper *librarian.Library, movies []movie) {
+func loadData(keeper *ddblibrarian.Library, movies []movie) {
 	fmt.Println("Loading movie data...\n")
 	for _, m := range movies {
 		jsonData, err := json.Marshal(m.Info)
@@ -158,7 +158,7 @@ func loadData(keeper *librarian.Library, movies []movie) {
 	}
 }
 
-func showItem(record *librarian.Library) {
+func showItem(record *ddblibrarian.Library) {
 	out, err := record.GetItem(&dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -174,7 +174,7 @@ func showItem(record *librarian.Library) {
 	}
 }
 
-func showItemFromSnapshot(record *librarian.Library, snapshot string) {
+func showItemFromSnapshot(record *ddblibrarian.Library, snapshot string) {
 	out, err := record.GetItemFromSnapshot(&dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -192,7 +192,7 @@ func showItemFromSnapshot(record *librarian.Library, snapshot string) {
 	}
 }
 
-func demo(record *librarian.Library) {
+func demo(record *ddblibrarian.Library) {
 	// show the initial data for 'The Avengers'
 	fmt.Println("=> Movie details -- active entry")
 	showItem(record)
