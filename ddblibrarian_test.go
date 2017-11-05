@@ -18,11 +18,11 @@
 	51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-
 package ddblibrarian
 
 import (
 	"fmt"
+	"log"
 	"reflect"
 	"strconv"
 	"testing"
@@ -35,7 +35,6 @@ import (
 
 const (
 	ddbTableName = "dynamodb-librarian"
-	ddbPKField   = "thepk"
 	ddbRegion    = "local"
 	ddbEndpoint  = "http://localhost:8000"
 )
@@ -302,59 +301,6 @@ func setupTest(schema int, t *testing.T) (*Library, func(test int, t *testing.T)
 			}
 			status = *res.Table.TableStatus
 		}
-	}
-}
-
-func setupTestDeprecated(t *testing.T) func(t *testing.T) {
-	t.Log("setup")
-	if pkType == "" {
-		t.Log("defaulting PK type to 'S'")
-		pkType = "S"
-	}
-	t.Log("PK type:", pkType)
-
-	var err error
-
-	ddbSession, err = session.NewSession(&aws.Config{
-		Region:     aws.String(ddbRegion),
-		Endpoint:   aws.String(ddbEndpoint),
-		MaxRetries: aws.Int(1),
-	})
-	if err != nil {
-		t.Error(err)
-	}
-
-	ddbService = dynamodb.New(ddbSession)
-	_, err = ddbService.CreateTable(&dynamodb.CreateTableInput{
-		TableName: aws.String(ddbTableName),
-		KeySchema: []*dynamodb.KeySchemaElement{
-			{
-				AttributeName: aws.String(ddbPKField),
-				KeyType:       aws.String(dynamodb.KeyTypeHash),
-			},
-		},
-		AttributeDefinitions: []*dynamodb.AttributeDefinition{
-			{
-				AttributeName: aws.String(ddbPKField),
-				AttributeType: aws.String(pkType),
-			},
-		},
-		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-			ReadCapacityUnits:  aws.Int64(10),
-			WriteCapacityUnits: aws.Int64(10),
-		},
-	})
-	if err != nil {
-		t.Error(err)
-	}
-
-	return func(t *testing.T) {
-		t.Log("teardown")
-		ddbService.DeleteTable(&dynamodb.DeleteTableInput{
-			TableName: aws.String(ddbTableName),
-		})
-		// also reset the type for the PK
-		pkType = ""
 	}
 }
 
@@ -896,151 +842,3 @@ func TestLibrary_GeneralUsage(t *testing.T) {
 		teardown(schema, t)
 	}
 }
-
-//// TODO: too many hardcoded strings have accumulated here
-//// TODO: update to go through all possible combinations of primary keys and respective data types
-//// TODO: make sure to use a large enough sample we have to destroy snapshots and recycle IDs
-//func TestUsage(t *testing.T) {
-//	teardown := setupTestDeprecated(t)
-//	defer teardown(t)
-//
-//	client, err := New(getTableName(schema), ddbPKField, "S", "", "", ddbSession)
-//	if err != nil {
-//		t.Error(err.Error())
-//	}
-//
-//	client.PutItem(&dynamodb.PutItemInput{
-//		TableName: aws.String(client.tableName),
-//		Item: map[string]*dynamodb.AttributeValue{
-//			ddbPKField: {S: aws.String("presnapshot")},
-//			"value":    {S: aws.String("no snapshots")},
-//		}})
-//	client.PutItem(&dynamodb.PutItemInput{
-//		TableName: aws.String(client.tableName),
-//		Item: map[string]*dynamodb.AttributeValue{
-//			ddbPKField: {S: aws.String("multipleversions")},
-//			"value":    {S: aws.String("before backup1")},
-//		}})
-//
-//	err = client.Snapshot("backup1")
-//	if err != nil {
-//		fmt.Println("failed to create snapshot 'backup1':", err)
-//	}
-//
-//	client.PutItem(&dynamodb.PutItemInput{
-//		TableName: aws.String(client.tableName),
-//		Item: map[string]*dynamodb.AttributeValue{
-//			ddbPKField: {S: aws.String("multipleversions")},
-//			"value":    {S: aws.String("after backup1")},
-//		}})
-//	client.PutItem(&dynamodb.PutItemInput{
-//		TableName: aws.String(client.tableName),
-//		Item: map[string]*dynamodb.AttributeValue{
-//			ddbPKField: {S: aws.String("just_backup_1")},
-//			"value":    {S: aws.String("before backup2")},
-//		}})
-//
-//	client.Snapshot("backup2")
-//
-//	client.PutItem(&dynamodb.PutItemInput{
-//		TableName: aws.String(client.tableName),
-//		Item: map[string]*dynamodb.AttributeValue{
-//			ddbPKField: {S: aws.String("multipleversions")},
-//			"value":    {S: aws.String("after backup2")},
-//		}})
-//
-//	// expect the most recent version, which may be before a snapshot was taken
-//	for k, v := range map[string]string{
-//		"presnapshot":      "no snapshots",
-//		"multipleversions": "after backup2",
-//		"just_backup_1":    "before backup2",
-//	} {
-//		data, err := client.GetItem(&dynamodb.GetItemInput{
-//			TableName: aws.String(client.tableName),
-//			Key: map[string]*dynamodb.AttributeValue{
-//				ddbPKField: {S: aws.String(k)},
-//			},
-//		})
-//		if err != nil {
-//			t.Error(err)
-//		}
-//		if *data.Item["value"].S != v {
-//			t.Error("Expected '", v, "' got '", *data.Item["value"].S, "'")
-//		}
-//	}
-//
-//	// get the same key from different snapshots (including before any were created)
-//	for snapshot, v := range map[string]string{
-//		"":        "before backup1",
-//		"backup1": "after backup1",
-//		"backup2": "after backup2",
-//	} {
-//		data, err := client.GetItemFromSnapshot(&dynamodb.GetItemInput{
-//			TableName: aws.String(client.tableName),
-//			Key: map[string]*dynamodb.AttributeValue{
-//				ddbPKField: {S: aws.String("multipleversions")},
-//			},
-//		}, snapshot)
-//		if err != nil {
-//			t.Error(err)
-//		}
-//
-//		if *data.Item["value"].S != v {
-//			t.Error("Expected '", v, "' got '", *data.Item["value"].S, "'")
-//		}
-//	}
-//
-//	// rollback
-//	client.Rollback("backup1")
-//	for k, v := range map[string]string{
-//		"presnapshot":      "no snapshots",
-//		"multipleversions": "after backup1",
-//		"just_backup_1":    "before backup2",
-//	} {
-//		data, err := client.GetItem(&dynamodb.GetItemInput{
-//			TableName: aws.String(client.tableName),
-//			Key: map[string]*dynamodb.AttributeValue{
-//				ddbPKField: {S: aws.String(k)},
-//			},
-//		})
-//		if err != nil {
-//			t.Error(err)
-//		}
-//		if *data.Item["value"].S != v {
-//			t.Error("Expected '", v, "' got '", *data.Item["value"].S, "'")
-//		}
-//	}
-//
-//	// PutItem always writes to the current snapshot, which was set above with Rollback
-//	client.PutItem(&dynamodb.PutItemInput{
-//		TableName: aws.String(client.tableName),
-//		Item: map[string]*dynamodb.AttributeValue{
-//			ddbPKField: {S: aws.String("multipleversions")},
-//			"value":    {S: aws.String("override backup1")},
-//		}})
-//	data, err := client.GetItemFromSnapshot(&dynamodb.GetItemInput{
-//		TableName: aws.String(client.tableName),
-//		Key: map[string]*dynamodb.AttributeValue{
-//			ddbPKField: {S: aws.String("multipleversions")},
-//		},
-//	}, "backup1")
-//	if err != nil {
-//		t.Error(err)
-//	}
-//	if *data.Item["value"].S != "override backup1" {
-//		t.Error("Expected 'override backup1' got '", *data.Item["value"].S, "'")
-//	}
-//
-//	// make sure GetItem returns data from the snapshot we rolled back to
-//	data, err = client.GetItem(&dynamodb.GetItemInput{
-//		TableName: aws.String(client.tableName),
-//		Key: map[string]*dynamodb.AttributeValue{
-//			ddbPKField: {S: aws.String("multipleversions")},
-//		}})
-//	if err != nil {
-//		t.Error(err)
-//	}
-//	if *data.Item["value"].S != "override backup1" {
-//		t.Error("Expected 'override backup1' got '", *data.Item["value"].S, "'")
-//	}
-//}
