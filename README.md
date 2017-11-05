@@ -1,10 +1,15 @@
-# dynamodb-librarian
-Create and manage snapshots on DynamoDB (point-in-time copies of individual items)
+# DynamoDB Librarian
+This library extends the [Go SDK for DynamoDB](https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/) by 
+adding support for point-in-time copies of individual items on arbitrary 
+DynamoDB tables.
+
+We call these *snapshots*, a form of *item versioning*.
+
 
 ## Overview
-`dynamodb-librarian` is a thin wrapper around the
+`ddblibrarian` is a thin wrapper around the
 [Go SDK for DynamoDB](https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/)
-that adds support for item versioning.
+that adds support for item versioning in the form of *snapshots*.
 
 Each item is tagged with a version identifier in a way that is transparent
 to the application &mdash; no code changes are necessary to use this library.
@@ -13,11 +18,11 @@ A new version can be started by calling `Snapshot("version-id")`, where
 `version-id` is an arbitrary string used to uniquely identify all items 
 created thereafter.
 
-The usual `GetItem`, `PutItem`, `UpdateItem`, and `DeleteItem` API calls 
-will default to reading and writing from/to the most recent version.
+The wrappers around the usual `GetItem`, `PutItem`, `UpdateItem`, and `DeleteItem` API calls 
+will read and write from/to the *active version* (usually the most recent one).
 
-To obtain a specific version of a given item, `GetItemFromSnapshot` 
-can be used.
+To work with a specific version of a given item, another set of API calls (carrying the suffix `FromSnapshot`), is 
+provided. 
 
 
 ## Core concepts
@@ -63,8 +68,12 @@ The following operations consume a fixed capacity.
 
 
 ## Limitations
-The primary key must be either a string or a number. No other data types
-are supported.
+The partition key must be either a string or an integer. No other data types, including floating point, are supported.
+
+Because a snapshot ID requires up to 3 characters, the 
+[maximum length](http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Limits.html)
+ of the partition key is reduced to 2045 bytes (or 35 digits, 
+if the data type is Number).  
 
 
 ## Work in progress
