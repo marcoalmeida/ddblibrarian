@@ -18,8 +18,11 @@
 	51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-
-// Package ddblibrarian implements thin wrapper around the Go SDK for DynamoDB to add support for item versioning
+// Package ddblibrarian extends the Go SDK for DynamoDB by adding support for snapshots (or item versioning) in a
+// fully managed way.
+//
+// It can be used with any existing, arbitrary, DynamoDB tables as long as the type of the partition key is either a
+// string or a number.
 package ddblibrarian
 
 import (
@@ -47,8 +50,22 @@ type Library struct {
 	// cache.set(key, value), cache.get(key), cache.invalidate(key), cache.ttl(X)
 }
 
+// New creates a new Library instance for the specified table.
+//
+// Each Library instance needs the primary key schema: partitionKey, partitionKeyType, rangeKey, and
+// rangeKeyType. In the case of a simple primary key, i.e., only a partition key, rangeKey and rangeKeyType should be
+// empty strings.
+//
+// The value of partitionKeyType and rangeKeyType and must be either "N" or "S".
+//
+// Every Library instance includes a DynamoDB client. It is created using the session for AWS services p, and,
+// optionally, additional configuration details as provided by cfg.
+//
+// partitionKey: partition key attribute
+// rangeKey: range key attribute, empty string if one does not exist
+// partitionKeyType and rangeKeyType:
 func New(
-	tableName string,
+	table string,
 	partitionKey string,
 	partitionKeyType string,
 	rangeKey string,
@@ -61,7 +78,7 @@ func New(
 	}
 
 	return &Library{
-		tableName:        tableName,
+		tableName:        table,
 		partitionKey:     partitionKey,
 		partitionKeyType: partitionKeyType,
 		rangeKey:         rangeKey,
@@ -169,7 +186,6 @@ func (c *Library) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 	if err != nil {
 		return nil, errors.New("failed to get snapshot ID: " + err.Error())
 	}
-
 	// save the PK value that we're about to change
 	savedKey := c.getPKValueWithType(input.Item[c.partitionKey])
 	// prepend the snapshot ID (depends on type)
