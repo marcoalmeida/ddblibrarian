@@ -53,7 +53,7 @@ read/write the item](http://docs.aws.amazon.com/amazondynamodb/latest/developerg
 | Operation     | Overhead       | Notes |
 | --------------|----------------|-------|
 | `PutItem`     | 1 read unit    ||
-| `GetItem`     | N read units   | In the worst case, where N is the number of existing snapshots |
+| `GetItem`     | 1+N read units   | In the worst case, where N is the number of existing snapshots |
 | `PutItemFromSnapshot`     | 1 read unit    ||
 
 
