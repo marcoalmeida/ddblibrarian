@@ -63,10 +63,6 @@ type Library struct {
 //
 // Every Library instance includes a DynamoDB client. It is created using the session for AWS services p, and,
 // optionally, additional configuration details as provided by cfg.
-//
-// partitionKey: partition key attribute
-// rangeKey: range key attribute, empty string if one does not exist
-// partitionKeyType and rangeKeyType:
 func New(
 	table string,
 	partitionKey string,

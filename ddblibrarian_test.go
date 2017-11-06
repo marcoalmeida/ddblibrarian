@@ -22,7 +22,6 @@ package ddblibrarian
 
 import (
 	"fmt"
-	"log"
 	"reflect"
 	"strconv"
 	"testing"
@@ -41,7 +40,6 @@ const (
 
 var ddbService *dynamodb.DynamoDB
 var ddbSession *session.Session
-var pkType string
 
 // we always need to test things on 4 different schemas: (simple or composite indexes) x (string or number)
 // the following set of constants allows us to index the common parameters by the schema being tested
@@ -841,39 +839,4 @@ func TestLibrary_GeneralUsage(t *testing.T) {
 
 		teardown(schema, t)
 	}
-}
-
-// Examples
-
-// Create a new session for the DynamoDB service, create a new instance of ddblibrarian (for some existing table,
-// passing along the session), and list all existing snapshots as an example of basic usage.
-//
-// Note: error handling has been greatly simplified. Please make sure not to just copy-past this to a live,
-// production system.
-func ExampleNew() {
-	// Create a new session for the DynamoDB client
-	s, err := session.NewSession(&aws.Config{
-		Region:     aws.String("us-east-1"),
-		Endpoint:   aws.String("http://localhost:8000"),
-		MaxRetries: aws.Int(3),
-	})
-	if err != nil {
-		log.Fatalln(err)
-	}
-	// Create a new ddblibrarian instance
-	library, err := New("example", "year", "N", "", "", s)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	// List all existing snapshots
-	snapshots, err := library.ListSnapshots()
-	if err != nil {
-		log.Fatalln(err)
-	}
-
-	for _, s := range snapshots {
-		fmt.Println(s)
-	}
-
-	// Output:
 }
