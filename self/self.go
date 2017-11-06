@@ -18,7 +18,6 @@
 	51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-
 package self
 
 import (
@@ -155,7 +154,7 @@ func (s *config) Snapshot(snapshot string) (string, error) {
 		},
 		UpdateExpression: aws.String(
 			`SET #snapshots=:snapshots, #latestID=:latestID, #currentID=:latestID, #orderedIDs=:orderedIDs`,
-			),
+		),
 	}
 
 	// use a conditional update to avoid race conditions update the metadata iff the the latest snapshotID has not

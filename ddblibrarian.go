@@ -27,12 +27,15 @@ package ddblibrarian
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/marcoalmeida/ddblibrarian/self"
 )
+
+const snapshotDelimiter = "."
 
 type Library struct {
 	svc              *dynamodb.DynamoDB
@@ -186,24 +189,13 @@ func (c *Library) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 	if err != nil {
 		return nil, errors.New("failed to get snapshot ID: " + err.Error())
 	}
-	// save the PK value that we're about to change
-	savedKey := c.getPKValueWithType(input.Item[c.partitionKey])
-	// prepend the snapshot ID (depends on type)
-	if c.partitionKeyType == "S" {
-		input.Item[c.partitionKey].SetS(snapshotID + savedKey)
-	} else {
-		input.Item[c.partitionKey].SetN(snapshotID + savedKey)
-	}
 
+	// save the key as the user passed it and add the snapshot ID
+	originalKey := c.addSnapshotToPartitionKey(snapshotID, input.Item[c.partitionKey])
 	// update DDB
 	output, err := c.svc.PutItem(input)
-
-	// restore the original PK value
-	if c.partitionKeyType == "S" {
-		input.Item[c.partitionKey].SetS(savedKey)
-	} else {
-		input.Item[c.partitionKey].SetN(savedKey)
-	}
+	// restore the original key
+	c.restorePartitionKey(originalKey, input.Item[c.partitionKey])
 
 	return output, err
 }
@@ -226,24 +218,12 @@ func (c *Library) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 		return nil, errors.New("Failed to get snapshot ID: " + err.Error())
 	}
 
-	// save the PK value that we're about to change
-	savedKey := c.getPKValueWithType(input.Key[c.partitionKey])
-	// prepend the snapshot ID (depends on type)
-	if c.partitionKeyType == "S" {
-		input.Key[c.partitionKey].SetS(snapshotID + savedKey)
-	} else {
-		input.Key[c.partitionKey].SetN(snapshotID + savedKey)
-	}
-
+	// save the key as the user passed it and add the snapshot ID
+	originalKey := c.addSnapshotToPartitionKey(snapshotID, input.Key[c.partitionKey])
 	// update the table
 	output, err := c.svc.UpdateItem(input)
-
 	// restore the original PK value
-	if c.partitionKeyType == "S" {
-		input.Key[c.partitionKey].SetS(savedKey)
-	} else {
-		input.Key[c.partitionKey].SetN(savedKey)
-	}
+	c.restorePartitionKey(originalKey, input.Key[c.partitionKey])
 
 	return output, err
 }
@@ -295,25 +275,12 @@ func (c *Library) GetItemFromSnapshot(input *dynamodb.GetItemInput, snapshot str
 
 // Cost: 1RU
 func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string) (*dynamodb.GetItemOutput, error) {
-	// we're about to touch a field on a struct passed by the caller, let's save it to restore
-	savedKey := c.getPKValueWithType(input.Key[c.partitionKey])
-
-	// add the id to the PK before calling GetItem
-	searchKey := id + savedKey
-	if c.partitionKeyType == "S" {
-		input.Key[c.partitionKey].SetS(searchKey)
-	} else {
-		input.Key[c.partitionKey].SetN(searchKey)
-	}
-
+	// save the key as the user passed it and add the snapshot ID before calling GetItem
+	originalKey := c.addSnapshotToPartitionKey(id, input.Key[c.partitionKey])
+	//
 	item, err := c.svc.GetItem(input)
-
 	// restore the PK value
-	if c.partitionKeyType == "S" {
-		input.Key[c.partitionKey].SetS(savedKey)
-	} else {
-		input.Key[c.partitionKey].SetN(savedKey)
-	}
+	c.restorePartitionKey(originalKey, input.Key[c.partitionKey])
 
 	if err != nil {
 		return nil, err
@@ -322,11 +289,7 @@ func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string)
 	// remove the id information from the PK (if an item for the snapshot was found)
 	_, ok := item.Item[c.partitionKey]
 	if ok {
-		if c.partitionKeyType == "S" {
-			item.Item[c.partitionKey].SetS(savedKey)
-		} else {
-			item.Item[c.partitionKey].SetN(savedKey)
-		}
+		c.restorePartitionKey(originalKey, item.Item[c.partitionKey])
 	}
 
 	return item, err
@@ -381,34 +344,42 @@ func (c *Library) DeleteItemFromSnapshot(input *dynamodb.DeleteItemInput, snapsh
 }
 
 func (c *Library) deleteItemWithSnapshotID(input *dynamodb.DeleteItemInput, id string) (*dynamodb.DeleteItemOutput, error) {
-	// we're about to touch a field on a struct passed by the caller, let's save it to restore
-	savedKey := c.getPKValueWithType(input.Key[c.partitionKey])
-
-	// add the id to the PK before calling GetItem
-	searchKey := id + savedKey
-	if c.partitionKeyType == "S" {
-		input.Key[c.partitionKey].SetS(searchKey)
-	} else {
-		input.Key[c.partitionKey].SetN(searchKey)
-	}
-
+	// save the key as the user passed it and add the snapshot ID before calling DeleteItem
+	originalKey := c.addSnapshotToPartitionKey(id, input.Key[c.partitionKey])
+	//
 	output, err := c.svc.DeleteItem(input)
-
 	// restore the PK value
-	if c.partitionKeyType == "S" {
-		input.Key[c.partitionKey].SetS(savedKey)
-	} else {
-		input.Key[c.partitionKey].SetN(savedKey)
-	}
+	c.restorePartitionKey(originalKey, input.Key[c.partitionKey])
 
 	return output, err
 }
 
-// extract the value of the PK according to the type
-func (c *Library) getPKValueWithType(attribute *dynamodb.AttributeValue) string {
+// add a snapshot ID to the partition key of a given attribute
+func (c *Library) addSnapshotToPartitionKey(id string, pk *dynamodb.AttributeValue) string {
+	// extract the value of the partition key (depends on the type)
+	originalKey := ""
 	if c.partitionKeyType == "S" {
-		return *attribute.S
+		originalKey = *pk.S
 	} else {
-		return *attribute.N
+		originalKey = *pk.N
+	}
+
+	// create the new partition key which include the snapshot and update the attribute
+	snapshotKey := fmt.Sprintf("%s%s%s", id, snapshotDelimiter, originalKey)
+	if c.partitionKeyType == "S" {
+		pk.SetS(snapshotKey)
+	} else {
+		pk.SetN(snapshotKey)
+	}
+
+	return originalKey
+}
+
+// restore an (arbitrary) value to the partition key of a given attribute
+func (c *Library) restorePartitionKey(original string, pk *dynamodb.AttributeValue) {
+	if c.partitionKeyType == "S" {
+		pk.SetS(original)
+	} else {
+		pk.SetN(original)
 	}
 }
