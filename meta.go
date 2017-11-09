@@ -18,7 +18,7 @@
 	51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-package self
+package ddblibrarian
 
 import (
 	"errors"
@@ -73,10 +73,10 @@ type config struct {
 	latestSnapshotID         string
 }
 
-// New creates a new instance for querying and managing snapshot-related metadata.
+// newMeta creates a new instance for querying and managing snapshot-related metadata.
 // It caches data locally. If consistency is important, create one instance per operation instead of trying to reuse
 // it for long periods of time.
-func New(
+func newMeta(
 	svc *dynamodb.DynamoDB,
 	tableName string,
 	partitionKey string,
@@ -105,7 +105,7 @@ func New(
 	return data, nil
 }
 
-func (s *config) Snapshot(snapshot string) (string, error) {
+func (s *config) snapshot(snapshot string) (string, error) {
 	_, ok := s.snapshots[snapshot]
 	if ok {
 		return "", errors.New("snapshot already exists: " + snapshot)
@@ -171,7 +171,7 @@ func (s *config) Snapshot(snapshot string) (string, error) {
 	return newID, err
 }
 
-func (s *config) Rollback(snapshot string) (string, error) {
+func (s *config) rollback(snapshot string) (string, error) {
 	var item *dynamodb.UpdateItemInput
 	var id string
 	var err error
@@ -183,7 +183,7 @@ func (s *config) Rollback(snapshot string) (string, error) {
 
 	// DynamoDB does not support empty strings so rolling back to "" == before any snapshots => remove the key
 	if snapshot != "" {
-		id, err = s.GetSnapshotID(snapshot)
+		id, err = s.getSnapshotID(snapshot)
 		if err != nil {
 			return "", err
 		}
@@ -223,8 +223,8 @@ func (s *config) Rollback(snapshot string) (string, error) {
 	return id, err
 }
 
-// ListSnapshots returns all existing snapshots
-func (s *config) ListSnapshots() []string {
+// listSnapshots returns all existing snapshots
+func (s *config) listSnapshots() []string {
 	return s.chronologicalSnapshotIDs
 }
 
@@ -261,8 +261,8 @@ func (s *config) GetChronologicalSnapshotIDs(first string) []string {
 	return ids
 }
 
-// GetSnapshotID returns the internal ID mapped to the given snapshot
-func (s *config) GetSnapshotID(snapshot string) (string, error) {
+// getSnapshotID returns the internal ID mapped to the given snapshot
+func (s *config) getSnapshotID(snapshot string) (string, error) {
 	// special cases
 	switch snapshot {
 	case "":
@@ -283,9 +283,9 @@ func (s *config) GetSnapshotID(snapshot string) (string, error) {
 	return "", errors.New("snapshot '" + snapshot + "' does not exist")
 }
 
-// GetCurrentSnapshotID returns the ID of the snapshot currently set as active
+// getCurrentSnapshotID returns the ID of the snapshot currently set as active
 // This can be the most recent one, or some past snapshot in the case of a rollback
-func (s *config) GetCurrentSnapshotID() string {
+func (s *config) getCurrentSnapshotID() string {
 	// snapshots exist because latest != "", so current == "" means we rolled back to "" (before any snapshots)
 	if s.currentSnapshotID == "" && s.latestSnapshotID != "" {
 		return ""

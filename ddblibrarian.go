@@ -32,7 +32,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/marcoalmeida/ddblibrarian/self"
 )
 
 const snapshotDelimiter = "."
@@ -53,7 +52,7 @@ type Library struct {
 	// cache.set(key, value), cache.get(key), cache.invalidate(key), cache.ttl(X)
 }
 
-// New creates a new Library instance for the specified table.
+// newMeta creates a new Library instance for the specified table.
 //
 // Each Library instance needs the primary key schema: partitionKey, partitionKeyType, rangeKey, and
 // rangeKeyType. In the case of a simple primary key, i.e., only a partition key, rangeKey and rangeKeyType should be
@@ -92,13 +91,13 @@ func New(
 //
 // Cost: 1RU + 1WU
 func (c *Library) Snapshot(snapshot string) error {
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return errors.New("failed to create metadata client: " + err.Error())
 	}
 
 	// TODO: naming restrictions
-	_, err = meta.Snapshot(snapshot)
+	_, err = meta.snapshot(snapshot)
 	if err != nil {
 		return errors.New("failed to create snapshot: " + err.Error())
 	}
@@ -111,12 +110,12 @@ func (c *Library) Snapshot(snapshot string) error {
 //
 // Cost: 1RU
 func (c *Library) Browse(snapshot string) error {
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return err
 	}
 
-	current, err := meta.GetSnapshotID(snapshot)
+	current, err := meta.getSnapshotID(snapshot)
 	if err != nil {
 		return err
 	}
@@ -135,16 +134,16 @@ func (c *Library) StopBrowsing() {
 	c.currentSnapshot = ""
 }
 
-// Rollback changes the active snapshot and reverts the DynamoDB table to its state at the time the snapshot was taken.
+// rollback changes the active snapshot and reverts the DynamoDB table to its state at the time the snapshot was taken.
 //
 // Cost: 1RU + 1WU
 func (c *Library) Rollback(snapshot string) error {
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return err
 	}
 
-	_, err = meta.Rollback(snapshot)
+	_, err = meta.rollback(snapshot)
 	if err != nil {
 		return err
 	}
@@ -160,12 +159,12 @@ func (c *Library) DestroySnapshot(snapshot string) {
 }
 
 func (c *Library) ListSnapshots() ([]string, error) {
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return nil, err
 	}
 
-	return meta.ListSnapshots(), nil
+	return meta.listSnapshots(), nil
 }
 
 // Cost: 1RU + 1WU
@@ -176,12 +175,12 @@ func (c *Library) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 	var snapshotID string
 	var err error
 
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return nil, errors.New("failed to create snapshots client: " + err.Error())
 	}
 
-	snapshotID, err = meta.GetSnapshotID(self.SNAPSHOT_CURRENT)
+	snapshotID, err = meta.getSnapshotID(SNAPSHOT_CURRENT)
 	if err != nil {
 		return nil, errors.New("failed to get snapshot ID: " + err.Error())
 	}
@@ -204,12 +203,12 @@ func (c *Library) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 	var snapshotID string
 	var err error
 
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return nil, errors.New("Failed to create snapshots client: " + err.Error())
 	}
 
-	snapshotID, err = meta.GetSnapshotID(self.SNAPSHOT_CURRENT)
+	snapshotID, err = meta.getSnapshotID(SNAPSHOT_CURRENT)
 	if err != nil {
 		return nil, errors.New("Failed to get snapshot ID: " + err.Error())
 	}
@@ -226,13 +225,13 @@ func (c *Library) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 
 // Cost: (1 + N)RU -- worst case, where N is the number of snapshots
 func (c *Library) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return nil, err
 	}
 
 	// default to fetching data from the active/current snapshot (could be latest or a rollback)
-	startFrom := meta.GetCurrentSnapshotID()
+	startFrom := meta.getCurrentSnapshotID()
 	// override in case we're browsing some specific snapshot
 	if c.browsing {
 		startFrom = c.currentSnapshot
@@ -256,12 +255,12 @@ func (c *Library) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 
 // Cost: 2RU
 func (c *Library) GetItemFromSnapshot(input *dynamodb.GetItemInput, snapshot string) (*dynamodb.GetItemOutput, error) {
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return nil, err
 	}
 
-	id, err := meta.GetSnapshotID(snapshot)
+	id, err := meta.getSnapshotID(snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -293,12 +292,12 @@ func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string)
 
 // DeleteItem deletes `input` from the most recent snapshot where it exists
 func (c *Library) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return nil, err
 	}
 
-	startFrom := self.SNAPSHOT_LATEST
+	startFrom := SNAPSHOT_LATEST
 	if c.browsing {
 		startFrom = c.currentSnapshot
 	}
@@ -322,12 +321,12 @@ func (c *Library) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteI
 }
 
 func (c *Library) DeleteItemFromSnapshot(input *dynamodb.DeleteItemInput, snapshot string) (*dynamodb.DeleteItemOutput, error) {
-	meta, err := self.New(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return nil, err
 	}
 
-	id, err := meta.GetSnapshotID(snapshot)
+	id, err := meta.getSnapshotID(snapshot)
 	if err != nil {
 		return nil, err
 	}
