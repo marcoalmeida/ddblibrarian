@@ -55,8 +55,8 @@ const (
 // strings instead of integers because we need them to be of
 // same type as snapshots
 const (
-	SNAPSHOT_LATEST  = "latest"
-	SNAPSHOT_CURRENT = "current"
+	snapshotLatest  = "latest"
+	snapshotCurrent = "current"
 )
 
 type config struct {
@@ -239,9 +239,9 @@ func (s *config) GetChronologicalSnapshotIDs(first string) []string {
 		// just to avoid unnecessary loops as a minor performance improvement this really means "none" because there
 		// are no snapshots before the first one was even taken
 		return []string{""}
-	case SNAPSHOT_LATEST:
+	case snapshotLatest:
 		first = s.latestSnapshotID
-	case SNAPSHOT_CURRENT:
+	case snapshotCurrent:
 		first = s.currentSnapshotID
 	}
 
@@ -268,9 +268,9 @@ func (s *config) getSnapshotID(snapshot string) (string, error) {
 	case "":
 		// empty string means no snapshot (before any were created), the corresponding ID is also an empty string
 		return "", nil
-	case SNAPSHOT_LATEST:
+	case snapshotLatest:
 		return s.latestSnapshotID, nil
-	case SNAPSHOT_CURRENT:
+	case snapshotCurrent:
 		return s.currentSnapshotID, nil
 	}
 

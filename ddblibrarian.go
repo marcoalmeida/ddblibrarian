@@ -36,6 +36,7 @@ import (
 
 const snapshotDelimiter = "."
 
+// Represents one instance of ddblibrarian for a given DynamoDB table.
 type Library struct {
 	svc              *dynamodb.DynamoDB
 	tableName        string
@@ -52,7 +53,7 @@ type Library struct {
 	// cache.set(key, value), cache.get(key), cache.invalidate(key), cache.ttl(X)
 }
 
-// newMeta creates a new Library instance for the specified table.
+// New creates a new Library instance for the specified table.
 //
 // Each Library instance needs the primary key schema: partitionKey, partitionKeyType, rangeKey, and
 // rangeKeyType. In the case of a simple primary key, i.e., only a partition key, rangeKey and rangeKeyType should be
@@ -86,8 +87,9 @@ func New(
 	}, nil
 }
 
-// Snapshot creates a new point in time copy of individual items. An item exists in the snapshot to which
-// it was written and all future ones.
+// Snapshot starts a new snapshot and sets it as the active one.
+//
+// The snapshot will be used to store a point in time copy of each individual item written to it while it is active.
 //
 // Cost: 1RU + 1WU
 func (c *Library) Snapshot(snapshot string) error {
@@ -105,8 +107,9 @@ func (c *Library) Snapshot(snapshot string) error {
 	return nil
 }
 
-// Browse changes the active snapshot for this session only.
-// Other clients' sessions, including active ones, will not be affected.
+// Browse sets snapshot as the active snapshot for the session currently handled by Library.
+//
+// Other clients, with either new or already established connections, will not be affected.
 //
 // Cost: 1RU
 func (c *Library) Browse(snapshot string) error {
@@ -126,7 +129,10 @@ func (c *Library) Browse(snapshot string) error {
 	return nil
 }
 
-// StopBrowsing reverts the active snapshot to whatever the current state of the table is.
+// StopBrowsing reverts the active snapshot to the one set in table's metadata.
+//
+// This affects the current session. Other clients, with either new or already established connections, will not be
+// affected.
 //
 // Cost: 0
 func (c *Library) StopBrowsing() {
@@ -134,7 +140,9 @@ func (c *Library) StopBrowsing() {
 	c.currentSnapshot = ""
 }
 
-// rollback changes the active snapshot and reverts the DynamoDB table to its state at the time the snapshot was taken.
+// Rollback sets snapshot as the active snapshot.
+//
+// This operation will affect all clients, both new and already established connections.
 //
 // Cost: 1RU + 1WU
 func (c *Library) Rollback(snapshot string) error {
@@ -158,6 +166,9 @@ func (c *Library) DestroySnapshot(snapshot string) {
 	// TODO: remove the snapshot from the cache
 }
 
+// ListSnapshots returns a (chronological sorted) list of all existing snapshots.
+//
+// Cost: 1RU
 func (c *Library) ListSnapshots() ([]string, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
@@ -167,7 +178,9 @@ func (c *Library) ListSnapshots() ([]string, error) {
 	return meta.listSnapshots(), nil
 }
 
-// Cost: 1RU + 1WU
+// PutItem calls the PutItem API operation for input. The data is written to the active snapshot.
+//
+// Overhead: 1RU
 func (c *Library) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
 	// TODO: potential optimization: cache the latest version locally and update every X seconds
 	// TODO: leads to loss of accuracy but may significantly reduce the number of queries executed
@@ -180,7 +193,7 @@ func (c *Library) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 		return nil, errors.New("failed to create snapshots client: " + err.Error())
 	}
 
-	snapshotID, err = meta.getSnapshotID(SNAPSHOT_CURRENT)
+	snapshotID, err = meta.getSnapshotID(snapshotCurrent)
 	if err != nil {
 		return nil, errors.New("failed to get snapshot ID: " + err.Error())
 	}
@@ -195,10 +208,10 @@ func (c *Library) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 	return output, err
 }
 
-// UpdateItem edits an existing item's attributes, or adds a new item to the table if it does not already exist,
-// on the active snapshot.
+// UpdateItem calls the UpdateItem API operation for input. The data is written to the active
+// snapshot.
 //
-// Overhead: 1 read unit
+// Overhead: 1RU
 func (c *Library) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
 	var snapshotID string
 	var err error
@@ -208,7 +221,7 @@ func (c *Library) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 		return nil, errors.New("Failed to create snapshots client: " + err.Error())
 	}
 
-	snapshotID, err = meta.getSnapshotID(SNAPSHOT_CURRENT)
+	snapshotID, err = meta.getSnapshotID(snapshotCurrent)
 	if err != nil {
 		return nil, errors.New("Failed to get snapshot ID: " + err.Error())
 	}
@@ -223,7 +236,12 @@ func (c *Library) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 	return output, err
 }
 
-// Cost: (1 + N)RU -- worst case, where N is the number of snapshots
+// GetItem calls the GetItem API operation on input.
+//
+// It will start by trying to get the item input from the active snapshot. If the item is not found, GetItem will
+// try to get it from all previous snapshots, one at a time, in chronological order, until it is found.
+//
+// Overhead: N RU (worst case)
 func (c *Library) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
@@ -253,7 +271,9 @@ func (c *Library) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput
 	return c.getItemWithSnapshotID(input, "")
 }
 
-// Cost: 2RU
+// GetItemFromSnapshot calls the GetItem API operation on input. The item will be read (if it exists) from snapshot.
+//
+// Overhead: 1RU
 func (c *Library) GetItemFromSnapshot(input *dynamodb.GetItemInput, snapshot string) (*dynamodb.GetItemOutput, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
@@ -268,7 +288,6 @@ func (c *Library) GetItemFromSnapshot(input *dynamodb.GetItemInput, snapshot str
 	return c.getItemWithSnapshotID(input, id)
 }
 
-// Cost: 1RU
 func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string) (*dynamodb.GetItemOutput, error) {
 	// save the key as the user passed it and add the snapshot ID before calling GetItem
 	originalKey := c.addSnapshotToPartitionKey(id, input.Key[c.partitionKey])
@@ -290,14 +309,21 @@ func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string)
 	return item, err
 }
 
-// DeleteItem deletes `input` from the most recent snapshot where it exists
+// DeleteItem calls the DeleteItem API operation on input.
+//
+// It will start by trying to delete the item input from the active snapshot. If the item is not found, DeleteItem will
+// try to delete it from all previous snapshots, one at a time, in chronological order, until it is found.
+//
+// Overhead: 1RU
 func (c *Library) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
 		return nil, err
 	}
 
-	startFrom := SNAPSHOT_LATEST
+	// default to fetching data from the active/current snapshot (could be latest or a rollback)
+	startFrom := meta.getCurrentSnapshotID()
+	// override in case we're browsing some specific snapshot
 	if c.browsing {
 		startFrom = c.currentSnapshot
 	}
@@ -320,6 +346,10 @@ func (c *Library) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteI
 	return c.deleteItemWithSnapshotID(input, "")
 }
 
+// DeleteItemFromSnapshot calls the DeleteItem API operation on input. The item will be deleted (if it exists) from
+// snapshot.
+//
+// Overhead: 1RU
 func (c *Library) DeleteItemFromSnapshot(input *dynamodb.DeleteItemInput, snapshot string) (*dynamodb.DeleteItemOutput, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {

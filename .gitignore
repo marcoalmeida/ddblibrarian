@@ -18,5 +18,4 @@
 *.iml
 
 # binaries
-cmd/client/client
-cmd/demo/demo
+cmd/ddblibrarian-client/ddblibrarian-client
