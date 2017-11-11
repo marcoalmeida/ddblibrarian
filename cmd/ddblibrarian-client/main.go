@@ -7,7 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/marcoalmeida/dynamodb-librarian"
+	"github.com/marcoalmeida/ddblibrarian"
 )
 
 type appConfig struct {
@@ -42,7 +42,7 @@ func checkFlags(app *appConfig) {
 	}
 }
 
-func connect(app *appConfig) *librarian.Library {
+func connect(app *appConfig) *ddblibrarian.Library {
 	ddbSession, err := session.NewSession(&aws.Config{
 		Region:     aws.String(app.region),
 		Endpoint:   aws.String(app.endpoint),
@@ -52,7 +52,7 @@ func connect(app *appConfig) *librarian.Library {
 		log.Fatal(err.Error())
 	}
 
-	client, err := librarian.New(
+	client, err := ddblibrarian.New(
 		app.table,
 		app.partitionKey,
 		app.partitionKeyType,
@@ -67,7 +67,7 @@ func connect(app *appConfig) *librarian.Library {
 	return client
 }
 
-func thingThatDoesTheStuff(app *appConfig, library *librarian.Library) {
+func thingThatDoesTheStuff(app *appConfig, library *ddblibrarian.Library) {
 	if app.rollback != "" {
 		err := library.Rollback(app.rollback)
 		if err != nil {
