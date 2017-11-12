@@ -241,7 +241,7 @@ func (c *Library) UpdateItem(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateI
 // It will start by trying to get the item input from the active snapshot. If the item is not found, GetItem will
 // try to get it from all previous snapshots, one at a time, in chronological order, until it is found.
 //
-// Overhead: N RU (worst case)
+// Overhead: (1+N) RU (worst case, where N is the number of snapshots)
 func (c *Library) GetItem(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
@@ -314,7 +314,7 @@ func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string)
 // It will start by trying to delete the item input from the active snapshot. If the item is not found, DeleteItem will
 // try to delete it from all previous snapshots, one at a time, in chronological order, until it is found.
 //
-// Overhead: 1RU
+// Overhead: (1+N) RU (worst case, where N is the number of snapshots)
 func (c *Library) DeleteItem(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
 	if err != nil {
