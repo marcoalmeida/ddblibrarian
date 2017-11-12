@@ -14,49 +14,50 @@ that adds support for item versioning in the form of *snapshots*.
 Each item is tagged with a version identifier in a way that is transparent
 to the application &mdash; no code changes are necessary to use this library.
 
-A new version can be started by calling `Snapshot("version-id")`, where
+A new snapshot can be started by calling `Snapshot("version-id")`, where
 `version-id` is an arbitrary string used to uniquely identify all items 
 created thereafter.
 
 The wrappers around the usual `GetItem`, `PutItem`, `UpdateItem`, and `DeleteItem` API calls 
-will read and write from/to the *active version* (usually the most recent one).
+will read/write from/to the *active snapshot* (usually the most recent one).
 
 To work with a specific version of a given item, another set of API calls (carrying the suffix `FromSnapshot`), is 
 provided. 
 
 
 ## Core concepts
-A *Snapshot* is a point in time copy of individual items.
+A *snapshot* is a point in time copy of individual items.
 An item exists in the snapshot to which it was written and all future ones.
 
 The *active snapshot* is the point in time copy which API calls use by
 default. It defaults to the most recent snapshot, but is updated by calls
 to `Rollback` and `Browse`.
 
-A *Rollback* changes the active snapshot and reverts the DynamoDB table 
+A *rollback* changes the active snapshot reverting the DynamoDB table 
 to its state at the time the snapshot was taken.
 
-The *Browse* API call also changes the active snapshot, but it does not 
-revert the table's state &mdash; the scope of this action is *limited to the client 
-session that issued it*. 
+It is also possible to *browse* a given snapshot. This operation changes the active snapshot, but, unlike rolback, it 
+does not revert the table's state. The scope of this action is *limited to the client 
+session that started it*. 
 
 
 ## Cost
 Maintaining multiple versions of each item comes at a cost, both in terms
-of storage size and consumed read/write capacity.
+of storage space and consumed read/write capacity.
 
 
 The following table lists the overhead of each operation, i.e., extra
-throughput capacity consumed. This will add to the [throughput required to actually
-read/write the item](http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ProvisionedThroughput.html).
+throughput capacity consumed that will add to the 
+[throughput required](http://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ProvisionedThroughput.html)
+ to read/write an item. 
 
 | Operation     | Overhead       | Notes |
 | --------------|----------------|-------|
 | `PutItem`     | 1 read unit    ||
 | `GetItem`     | 1+N read units   | In the worst case, where N is the number of existing snapshots |
-| `PutItemFromSnapshot`     | 1 read unit    ||
-
-
+| `GetItemFromSnapshot`     | 1 read unit    ||
+| `DeleteItem`     | 1+N read units   | In the worst case, where N is the number of existing snapshots |
+| `DeleteItemFromSnapshot`     | 1 read unit    ||
 
 The following operations consume a fixed capacity.
 
