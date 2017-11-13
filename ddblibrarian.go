@@ -225,13 +225,13 @@ func (c *Library) BatchWriteItem(input *dynamodb.BatchWriteItemInput) (*dynamodb
 	}
 
 	// make sure we're only writing to the managed table
-	if len(input.RequestItems) != 1 {
-		return nil, errors.New("BatchWriteItem does not support retrieving data from multiple tables")
+	if len(input.RequestItems) > 1 {
+		return nil, errors.New("BatchWriteItem does not support writing data to multiple tables")
 	}
 
 	requests, ok := input.RequestItems[c.tableName]
 	if !ok {
-		return nil, errors.New("BathWriteItem can only retrieve items from the managed table: " + c.tableName)
+		return nil, errors.New("BathWriteItem can only write items to the managed table: " + c.tableName)
 	}
 
 	snapshotID, err = meta.getSnapshotID(snapshotCurrent)
@@ -433,7 +433,7 @@ func (c *Library) batchGetItemWithSnapshotID(
 	input *dynamodb.BatchGetItemInput,
 	id string,
 ) (*dynamodb.BatchGetItemOutput, error) {
-	if len(input.RequestItems) != 1 {
+	if len(input.RequestItems) > 1 {
 		return nil, errors.New("BatchGetItem does not support retrieving data from multiple tables")
 	}
 
