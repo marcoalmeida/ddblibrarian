@@ -79,8 +79,7 @@ if the data type is Number).
 
 ## Work in progress
 * `DestroySnapshot`
-* Batch operations, such as `BatchGetItem` and `BatchGetItemFromSnapshot`
 
 
 ## Example
-Take a look at [the demo](https://github.com/marcoalmeida/ddblibrarian/tree/master/cmd/demo).
+Take a look at [the batch job demo](https://github.com/marcoalmeida/ddblibrarian/blob/master/example_batchjob_test.go).
