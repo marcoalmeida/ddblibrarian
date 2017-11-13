@@ -252,15 +252,14 @@ func (c *Library) BatchWriteItem(input *dynamodb.BatchWriteItemInput) (*dynamodb
 	output, err := c.svc.BatchWriteItem(input)
 	// remove the snapshot ID info from the PK of requests that were not processed
 	unprocessed, ok := output.UnprocessedItems[c.tableName]
-	if !ok {
-		return nil, errors.New("BathWriteItem can only retrieve items from the managed table: " + c.tableName)
-	}
-	for _, r := range unprocessed {
-		if r.DeleteRequest != nil {
-			c.removeSnapshotFromPartitionKey(r.DeleteRequest.Key[c.partitionKey])
-		}
-		if r.PutRequest != nil {
-			c.removeSnapshotFromPartitionKey(r.PutRequest.Item[c.partitionKey])
+	if ok {
+		for _, r := range unprocessed {
+			if r.DeleteRequest != nil {
+				c.removeSnapshotFromPartitionKey(r.DeleteRequest.Key[c.partitionKey])
+			}
+			if r.PutRequest != nil {
+				c.removeSnapshotFromPartitionKey(r.PutRequest.Item[c.partitionKey])
+			}
 		}
 	}
 
