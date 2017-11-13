@@ -286,41 +286,6 @@ func (c *Library) GetItemFromSnapshot(input *dynamodb.GetItemInput, snapshot str
 	return c.getItemWithSnapshotID(input, id)
 }
 
-// BatchGetItem
-//
-// Retrieving items from more than one table is not supported. If any tables other than the one passed to New are
-// used, the operation is aborted and an error is returned.
-//
-// Overhead: 1RU
-//func (c *Library) BatchGetItem(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-//	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
-//	if err != nil {
-//		return nil, err
-//	}
-//
-//	// default to fetching data from the active/current snapshot (could be latest or a rollback)
-//	startFrom := meta.getCurrentSnapshotID()
-//	// override in case we're browsing some specific snapshot
-//	if c.browsing {
-//		startFrom = c.currentSnapshot
-//	}
-//
-//	snapshotIDs := meta.GetChronologicalSnapshotIDs(startFrom)
-//
-//	for _, id := range snapshotIDs {
-//		item, err := c.batchGetItemWithSnapshotID(input, id)
-//		if err != nil {
-//			return nil, err
-//		}
-//		if item.Item != nil {
-//			return item, nil
-//		}
-//	}
-//
-//	// maybe the item was created before any snapshots were created
-//	return c.getItemWithSnapshotID(input, "")
-//}
-
 func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string) (*dynamodb.GetItemOutput, error) {
 	// save the key as the user passed it and add the snapshot ID before calling GetItem
 	originalKey := c.addSnapshotToPartitionKey(id, input.Key[c.partitionKey])
@@ -342,42 +307,109 @@ func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string)
 	return item, err
 }
 
-//func (c *Library) batchGetItemWithSnapshotID(
-//	input *dynamodb.BatchGetItemInput,
-//	id string,
-//) (*dynamodb.BatchGetItemOutput, error) {
-//	if len(input.RequestItems) != 1 {
-//		return nil, errors.New("BatchGetItem does not support retrieving data from multiple tables")
-//	}
+// BatchGetItem retrieves the attributes of one or more items from, identified by primary key.
 //
-//	keysAndAttributes, ok := input.RequestItems[c.tableName]
-//	if !ok {
-//		return nil, errors.New("BathGetItem can only retrieve items from the managed table: " + c.tableName)
-//	}
+// It will start by trying to get input from the active snapshot. If not found, BatchGetItem will
+// try to retrieve it from all previous snapshots, one at a time, in chronological order.
 //
-//	// add the snapshot ID
-//	for _, k := range keysAndAttributes.Keys {
-//		c.addSnapshotToPartitionKey(id, k[c.partitionKey])
-//	}
-//	// retrieve items
-//	item, err := c.svc.BatchGetItem(input)
-//	// restore the PK value to the variable we received
-//	for _, k := range keysAndAttributes.Keys {
-//		c.addSnapshotToPartitionKey(id, k[c.partitionKey])
-//	}
+// Retrieving items from more than one table is not supported. If any tables other than the one passed to New are
+// used, the operation is aborted and an error is returned.
 //
-//	if err != nil {
-//		return nil, err
-//	}
+// Overhead: 1RU
+func (c *Library) BatchGetItem(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	if err != nil {
+		return nil, err
+	}
+
+	// default to fetching data from the active/current snapshot (could be latest or a rollback)
+	startFrom := meta.getCurrentSnapshotID()
+	// override in case we're browsing some specific snapshot
+	if c.browsing {
+		startFrom = c.currentSnapshot
+	}
+
+	snapshotIDs := meta.GetChronologicalSnapshotIDs(startFrom)
+
+	for _, id := range snapshotIDs {
+		output, err := c.batchGetItemWithSnapshotID(input, id)
+		if err != nil {
+			return nil, err
+		}
+		if output.Responses != nil {
+			return output, nil
+		}
+	}
+
+	// maybe the item was created before any snapshots were created
+	return c.batchGetItemWithSnapshotID(input, "")
+}
+
+// BatchGetItemFromSnapshot retrieves the attributes of one or more items from a specific snapshot.
 //
-//	// remove the id information from the PK (if an item for the snapshot was found)
-//	_, ok := item.Item[c.partitionKey]
-//	if ok {
-//		c.restorePartitionKey(originalKey, item.Item[c.partitionKey])
-//	}
-//
-//	return item, err
-//}
+// Overhead: 1RU
+func (c *Library) BatchGetItemFromSnapshot(
+	input *dynamodb.BatchGetItemInput,
+	snapshot string,
+) (*dynamodb.BatchGetItemOutput, error) {
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := meta.getSnapshotID(snapshot)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.batchGetItemWithSnapshotID(input, id)
+}
+
+func (c *Library) batchGetItemWithSnapshotID(
+	input *dynamodb.BatchGetItemInput,
+	id string,
+) (*dynamodb.BatchGetItemOutput, error) {
+	if len(input.RequestItems) != 1 {
+		return nil, errors.New("BatchGetItem does not support retrieving data from multiple tables")
+	}
+
+	keysAndAttributes, ok := input.RequestItems[c.tableName]
+	if !ok {
+		return nil, errors.New("BathGetItem can only retrieve items from the managed table: " + c.tableName)
+	}
+
+	// add the snapshot ID
+	for _, k := range keysAndAttributes.Keys {
+		c.addSnapshotToPartitionKey(id, k[c.partitionKey])
+	}
+	// retrieve items
+	output, err := c.svc.BatchGetItem(input)
+	// restore the PK value to the variable we received
+	for _, k := range keysAndAttributes.Keys {
+		c.removeSnapshotFromPartitionKey(k[c.partitionKey])
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// remove the snapshot id from the PKs retrieved
+	attrs, ok := output.Responses[c.tableName]
+	if ok {
+		for _, k := range attrs {
+			c.removeSnapshotFromPartitionKey(k[c.partitionKey])
+		}
+	}
+	// remove the snapshot id from keys that have not been processed
+	keysAndAttributes, ok = output.UnprocessedKeys[c.tableName]
+	if ok {
+		for _, k := range keysAndAttributes.Keys {
+			c.removeSnapshotFromPartitionKey(k[c.partitionKey])
+		}
+	}
+
+	return output, err
+}
 
 // DeleteItem calls the DeleteItem API operation on input.
 //
