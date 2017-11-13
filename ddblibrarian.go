@@ -206,6 +206,67 @@ func (c *Library) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 	return output, err
 }
 
+// BatchWriteItem wraps the BatchWriteItem API operation for Amazon DynamoDB
+// (https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/#DynamoDB.BatchWriteItem).
+//
+// It puts or deletes multiple items in the managed table. The data is written to the active snapshot.
+//
+// Writing to more than one table is not supported. If any tables other than the one passed to New are
+// used, the operation is aborted and an error is returned.
+//
+// Overhead: 1RU
+func (c *Library) BatchWriteItem(input *dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
+	var snapshotID string
+	var err error
+
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	if err != nil {
+		return nil, errors.New("failed to create snapshots client: " + err.Error())
+	}
+
+	// make sure we're only writing to the managed table
+	if len(input.RequestItems) != 1 {
+		return nil, errors.New("BatchWriteItem does not support retrieving data from multiple tables")
+	}
+
+	requests, ok := input.RequestItems[c.tableName]
+	if !ok {
+		return nil, errors.New("BathWriteItem can only retrieve items from the managed table: " + c.tableName)
+	}
+
+	snapshotID, err = meta.getSnapshotID(snapshotCurrent)
+	if err != nil {
+		return nil, errors.New("failed to get snapshot ID: " + err.Error())
+	}
+
+	// add the snapshot ID to each request
+	for _, r := range requests {
+		if r.DeleteRequest != nil {
+			c.addSnapshotToPartitionKey(snapshotID, r.DeleteRequest.Key[c.partitionKey])
+		}
+		if r.PutRequest != nil {
+			c.addSnapshotToPartitionKey(snapshotID, r.PutRequest.Item[c.partitionKey])
+		}
+	}
+	// update DDB
+	output, err := c.svc.BatchWriteItem(input)
+	// remove the snapshot ID info from the PK of requests that were not processed
+	unprocessed, ok := output.UnprocessedItems[c.tableName]
+	if !ok {
+		return nil, errors.New("BathWriteItem can only retrieve items from the managed table: " + c.tableName)
+	}
+	for _, r := range unprocessed {
+		if r.DeleteRequest != nil {
+			c.removeSnapshotFromPartitionKey(r.DeleteRequest.Key[c.partitionKey])
+		}
+		if r.PutRequest != nil {
+			c.removeSnapshotFromPartitionKey(r.PutRequest.Item[c.partitionKey])
+		}
+	}
+
+	return output, err
+}
+
 // UpdateItem calls the UpdateItem API operation for input. The data is written to the active
 // snapshot.
 //
@@ -307,7 +368,10 @@ func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string)
 	return item, err
 }
 
-// BatchGetItem retrieves the attributes of one or more items from, identified by primary key.
+// BatchWriteItem wraps the BatchGetItem API operation for Amazon DynamoDB
+// (https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/#DynamoDB.BatchGetItem).
+//
+// It retrieves the attributes of one or more items from, identified by primary key.
 //
 // It will start by trying to get input from the active snapshot. If not found, BatchGetItem will
 // try to retrieve it from all previous snapshots, one at a time, in chronological order.
