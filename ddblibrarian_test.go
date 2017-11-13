@@ -409,6 +409,26 @@ func TestNoSnapshots(t *testing.T) {
 	}
 }
 
+func TestLibrary_Snapshot(t *testing.T) {
+	// make sure we get and error if trying to take more than 99 snapshots
+	for _, schema := range possibleSchemas {
+		library, teardown := setupTest(schema, t)
+		for i := 1; i < 100; i++ {
+			s := fmt.Sprintf("snapshot-%d", i)
+			err := library.Snapshot(s)
+			if err != nil {
+				t.Error("Failed to create snapshot:", s)
+			}
+		}
+		err := library.Snapshot("too-much")
+		if err == nil {
+			t.Error("Expected snapshot to fail: more than 99")
+		}
+
+		teardown(schema, t)
+	}
+}
+
 // make sure no errors are throw and that the current snapshot ID is updated locally but *and* on the meta-data
 func TestRollback(t *testing.T) {
 	for _, schema := range possibleSchemas {
