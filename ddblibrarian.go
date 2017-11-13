@@ -28,11 +28,11 @@ package ddblibrarian
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"strings"
 )
 
 const snapshotDelimiter = "."
