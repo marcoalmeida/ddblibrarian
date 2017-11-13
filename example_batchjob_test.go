@@ -43,7 +43,7 @@ const (
 	endpoint         = "http://localhost:8000"
 )
 
-var dataSets []string = []string{"example_batch_moviedata_1.json", "example_batch_moviedata_2.json"}
+var dataSets []string = []string{"example_batchjob_moviedata_1.json", "example_batchjob_moviedata_2.json"}
 
 type movieInfo struct {
 	Directors   []string `json:directors`
@@ -156,66 +156,97 @@ func readData(dataSource string) ([]movie, error) {
 	return movies, nil
 }
 
-func showItem(library *ddblibrarian.Library) {
-	out, err := library.GetItem(&dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			partitionKey: {N: aws.String("2012")},
-			rangeKey:     {S: aws.String("The Avengers")},
-		},
-	})
-
-	if err != nil {
-		fmt.Println("Failed to GetItem:", err.Error())
-	} else {
-		fmt.Println("OUT", out)
-		fmt.Printf("Rating: %s\n", string(out.Item["info"].B))
-	}
-}
-
-func showItemFromSnapshot(library *ddblibrarian.Library, snapshot string) {
-	out, err := library.GetItemFromSnapshot(&dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			partitionKey: {N: aws.String("2012")},
-			rangeKey:     {S: aws.String("The Avengers")},
-		},
-	},
-		snapshot,
-	)
-
-	if err != nil {
-		fmt.Println("Failed to GetItem:", err.Error())
-	} else {
-		fmt.Printf("Rating: %s\n", string(out.Item["info"].B))
-	}
-}
-
 func batchLoad(library *ddblibrarian.Library, movies []movie) {
-	for _, m := range movies {
+	requests := make(map[string][]*dynamodb.WriteRequest, 0)
+
+	for i, m := range movies {
+		// write batches of 20 elements
+		if i%20 == 0 && len(requests) > 0 {
+			_, err := library.BatchWriteItem(&dynamodb.BatchWriteItemInput{
+				RequestItems: requests,
+			})
+			if err != nil {
+				fmt.Println("Failed to write batch:", err)
+			}
+
+			// start a new batch
+			requests = make(map[string][]*dynamodb.WriteRequest, 0)
+		}
+
 		jsonData, err := json.Marshal(m.Info)
 		if err != nil {
 			fmt.Println("Failed to marshal info for", m.Title)
 		}
 
-		_, err = library.PutItem(&dynamodb.PutItemInput{
-			TableName: aws.String(tableName),
-			Item: map[string]*dynamodb.AttributeValue{
-				partitionKey: {N: aws.String(strconv.Itoa(int(m.Year)))},
-				rangeKey:     {S: aws.String(m.Title)},
-				"info":       {B: jsonData},
-			},
-		})
+		requests[tableName] = append(requests[tableName], &dynamodb.WriteRequest{
+			PutRequest: &dynamodb.PutRequest{
+				Item: map[string]*dynamodb.AttributeValue{
+					partitionKey: {N: aws.String(strconv.Itoa(int(m.Year)))},
+					rangeKey:     {S: aws.String(m.Title)},
+					"info":       {B: jsonData},
+				},
+			}})
 
 		if err != nil {
 			fmt.Println("Failed to load", m.Title, ":", err.Error())
 		}
 	}
+
+	// load whatever items are left
+	if len(requests) > 0 {
+		_, err := library.BatchWriteItem(&dynamodb.BatchWriteItemInput{
+			RequestItems: requests,
+		})
+		if err != nil {
+			fmt.Println("Failed to write batch:", err)
+		}
+	}
+}
+
+func demoItem() *dynamodb.GetItemInput {
+	return &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]*dynamodb.AttributeValue{
+			partitionKey: {N: aws.String("2012")},
+			rangeKey:     {S: aws.String("The Avengers")},
+		},
+	}
+}
+
+func extractRating(data []byte) float64 {
+	info := movieInfo{}
+	err := json.Unmarshal(data, &info)
+	if err != nil {
+		return -1
+	}
+
+	return info.Rating
+}
+
+func showItem(library *ddblibrarian.Library) {
+	out, err := library.GetItem(demoItem())
+
+	if err != nil {
+		fmt.Println("Failed to GetItem:", err.Error())
+	} else {
+		fmt.Printf("Rating: %.1f\n", extractRating(out.Item["info"].B))
+	}
+}
+
+func showItemFromSnapshot(library *ddblibrarian.Library, snapshot string) {
+	out, err := library.GetItemFromSnapshot(demoItem(), snapshot)
+
+	if err != nil {
+		fmt.Println("Failed to GetItemFromSnapshot:", err.Error())
+	} else {
+		fmt.Printf("Rating: %.1f\n", extractRating(out.Item["info"].B))
+	}
 }
 
 func demo(library *ddblibrarian.Library) {
+	fmt.Println("=====================")
 	// show the initial data for 'The Avengers'
-	fmt.Println("Current data:")
+	fmt.Println("Active snapshot:")
 	showItem(library)
 	fmt.Println()
 
@@ -225,17 +256,23 @@ func demo(library *ddblibrarian.Library) {
 	fmt.Println()
 
 	// Rollback so that all operations, from all clients, will use data from `initial-load`
-	fmt.Println("Rolling back to snapshot 'batch-0'")
+	fmt.Println("Rolling back to snapshot 'batch-0'...")
 	library.Rollback("batch-0")
 	fmt.Println()
 
 	// plain GetItem retrieves the good data
-	fmt.Println("Current data:")
+	fmt.Println("Active snapshot:")
 	showItem(library)
 }
 
 // This example demonstrates how to use dynamodb-librarian to keep multiple versions of a given item when updating
 // a table with some recurrent batch job that overwrites a significant number of items created by the previous run.
+//
+// In this example, the second run of the batch job loads one item with corrupt data. We use the field 'Rating' to
+// show the differences.
+//
+// In order to recover the previous, healthy, version of the data, we can either explicitly retrieve it from an earlier
+// snapshot or do a rollback and set that as the default version to all subsequent queries.
 func Example_batchJob() {
 	// create the table
 	err := setup()
@@ -279,10 +316,21 @@ func Example_batchJob() {
 	}
 
 	// Output:
-	//Taking a snapshot, before batch job 0...
+	//Taking a snapshot before batch job 0...
 	//Readind movie dataset 0...
 	//Running batch job 0...
-	//Taking a snapshot, before batch job 1...
+	//Taking a snapshot before batch job 1...
 	//Readind movie dataset 1...
 	//Running batch job 1...
+	//=====================
+	//Active snapshot:
+	//Rating: -5.0
+	//
+	//From the snapshot 'batch-0':
+	//Rating: 8.2
+	//
+	//Rolling back to snapshot 'batch-0'...
+	//
+	//Active snapshot:
+	//Rating: 8.2
 }
