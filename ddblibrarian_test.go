@@ -222,6 +222,14 @@ func getTableName(schema int) string {
 	return fmt.Sprintf("%s-%d", ddbTableName, schema)
 }
 
+func getPartitionKeyValue(schema int, attr map[string]*dynamodb.AttributeValue) *string {
+	if partitionKeyType[schema] == "S" {
+		return attr[partitionKey].S
+	} else {
+		return attr[partitionKey].N
+	}
+}
+
 func setupTest(schema int, t *testing.T) (*Library, func(test int, t *testing.T)) {
 	t.Log("setting up schema", schema, "on table", getTableName(schema))
 	var err error
@@ -403,6 +411,38 @@ func TestNoSnapshots(t *testing.T) {
 				"item:", getInput, "snapshot: 'nope'",
 				"got", err,
 			)
+		}
+
+		teardown(schema, t)
+	}
+}
+
+func TestLibrary_addRemoveSnapshotFromPartitionKey(t *testing.T) {
+	for _, schema := range possibleSchemas {
+		library, teardown := setupTest(schema, t)
+		attr := getAttributeValueForKey(schema)
+		original := getAttributeValueForKey(schema)
+
+		// nothing to remove, nothing should change
+		library.removeSnapshotFromPartitionKey(attr[partitionKey])
+		if !reflect.DeepEqual(attr[partitionKey], original[partitionKey]) {
+			t.Error("Expected", original[partitionKey], "got", attr[partitionKey])
+		}
+
+		// add some random snapshot, expect a mismatch
+		library.addSnapshotToPartitionKey("11", attr[partitionKey])
+		if reflect.DeepEqual(attr[partitionKey], original[partitionKey]) {
+			t.Error("Expected different items, got", original[partitionKey], attr[partitionKey])
+		}
+		// make sure the PK has been updated
+		if (*getPartitionKeyValue(schema, attr))[:2] != "11" {
+			t.Error("Expected snapshot ID 11, got", *getPartitionKeyValue(schema, attr))
+		}
+
+		// remove the snapshot ID, make sure it matches the original
+		library.removeSnapshotFromPartitionKey(attr[partitionKey])
+		if !reflect.DeepEqual(attr[partitionKey], original[partitionKey]) {
+			t.Error("Expected", original[partitionKey], "got", attr[partitionKey])
 		}
 
 		teardown(schema, t)

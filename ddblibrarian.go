@@ -32,6 +32,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/client"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"strings"
 )
 
 const snapshotDelimiter = "."
@@ -182,9 +183,6 @@ func (c *Library) ListSnapshots() ([]string, error) {
 //
 // Overhead: 1RU
 func (c *Library) PutItem(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-	// TODO: potential optimization: cache the latest version locally and update every X seconds
-	// TODO: leads to loss of accuracy but may significantly reduce the number of queries executed
-	// TODO: on systems with high write traffic
 	var snapshotID string
 	var err error
 
@@ -288,6 +286,41 @@ func (c *Library) GetItemFromSnapshot(input *dynamodb.GetItemInput, snapshot str
 	return c.getItemWithSnapshotID(input, id)
 }
 
+// BatchGetItem
+//
+// Retrieving items from more than one table is not supported. If any tables other than the one passed to New are
+// used, the operation is aborted and an error is returned.
+//
+// Overhead: 1RU
+//func (c *Library) BatchGetItem(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+//	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	// default to fetching data from the active/current snapshot (could be latest or a rollback)
+//	startFrom := meta.getCurrentSnapshotID()
+//	// override in case we're browsing some specific snapshot
+//	if c.browsing {
+//		startFrom = c.currentSnapshot
+//	}
+//
+//	snapshotIDs := meta.GetChronologicalSnapshotIDs(startFrom)
+//
+//	for _, id := range snapshotIDs {
+//		item, err := c.batchGetItemWithSnapshotID(input, id)
+//		if err != nil {
+//			return nil, err
+//		}
+//		if item.Item != nil {
+//			return item, nil
+//		}
+//	}
+//
+//	// maybe the item was created before any snapshots were created
+//	return c.getItemWithSnapshotID(input, "")
+//}
+
 func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string) (*dynamodb.GetItemOutput, error) {
 	// save the key as the user passed it and add the snapshot ID before calling GetItem
 	originalKey := c.addSnapshotToPartitionKey(id, input.Key[c.partitionKey])
@@ -308,6 +341,43 @@ func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string)
 
 	return item, err
 }
+
+//func (c *Library) batchGetItemWithSnapshotID(
+//	input *dynamodb.BatchGetItemInput,
+//	id string,
+//) (*dynamodb.BatchGetItemOutput, error) {
+//	if len(input.RequestItems) != 1 {
+//		return nil, errors.New("BatchGetItem does not support retrieving data from multiple tables")
+//	}
+//
+//	keysAndAttributes, ok := input.RequestItems[c.tableName]
+//	if !ok {
+//		return nil, errors.New("BathGetItem can only retrieve items from the managed table: " + c.tableName)
+//	}
+//
+//	// add the snapshot ID
+//	for _, k := range keysAndAttributes.Keys {
+//		c.addSnapshotToPartitionKey(id, k[c.partitionKey])
+//	}
+//	// retrieve items
+//	item, err := c.svc.BatchGetItem(input)
+//	// restore the PK value to the variable we received
+//	for _, k := range keysAndAttributes.Keys {
+//		c.addSnapshotToPartitionKey(id, k[c.partitionKey])
+//	}
+//
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	// remove the id information from the PK (if an item for the snapshot was found)
+//	_, ok := item.Item[c.partitionKey]
+//	if ok {
+//		c.restorePartitionKey(originalKey, item.Item[c.partitionKey])
+//	}
+//
+//	return item, err
+//}
 
 // DeleteItem calls the DeleteItem API operation on input.
 //
@@ -406,5 +476,29 @@ func (c *Library) restorePartitionKey(original string, pk *dynamodb.AttributeVal
 		pk.SetS(original)
 	} else {
 		pk.SetN(original)
+	}
+}
+
+// remove the snapshot ID from a partition key by finding the delimiter and removing everything to its left
+func (c *Library) removeSnapshotFromPartitionKey(pk *dynamodb.AttributeValue) {
+	var keyWithSnapshot *string
+	var key string
+
+	if c.partitionKeyType == "S" {
+		keyWithSnapshot = pk.S
+	} else {
+		keyWithSnapshot = pk.N
+	}
+
+	key = *keyWithSnapshot
+	i := strings.Index(*keyWithSnapshot, snapshotDelimiter)
+	if i != -1 {
+		key = (*keyWithSnapshot)[i+1:]
+	}
+
+	if c.partitionKeyType == "S" {
+		pk.SetS(key)
+	} else {
+		pk.SetN(key)
 	}
 }
