@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"unicode"
 
@@ -73,11 +74,15 @@ func connect(app *appConfig) (*dynamodb.DynamoDB, *ddblibrarian.Library) {
 	return dynamodb.New(srcSession), librarian
 }
 
-func writeItems(table string, library *ddblibrarian.Library, items []map[string]*dynamodb.AttributeValue) {
+func writeItems(
+	items []map[string]*dynamodb.AttributeValue,
+	lastEvaluatedKey map[string]*dynamodb.AttributeValue,
+	library *ddblibrarian.Library, app *appConfig,
+) {
 	requests := make(map[string][]*dynamodb.WriteRequest, 0)
 
 	for _, item := range items {
-		requests[table] = append(requests[table], &dynamodb.WriteRequest{
+		requests[app.dstTable] = append(requests[app.dstTable], &dynamodb.WriteRequest{
 			PutRequest: &dynamodb.PutRequest{
 				Item: item,
 			}})
@@ -87,8 +92,12 @@ func writeItems(table string, library *ddblibrarian.Library, items []map[string]
 		RequestItems: requests,
 	})
 	if err != nil {
-		// TODO: print (to stderr) the list of keys that failed
 		log.Println("Failed to write batch:", err)
+		for _, item := range items {
+			prettyPrintKey(item, "Failed item", app, true)
+		}
+	} else {
+		prettyPrintKey(lastEvaluatedKey, "Checkpoint", app, false)
 	}
 }
 
@@ -108,8 +117,8 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 			// TODO: minimize the number of (Get) network calls and parallelize writes
 			Limit: aws.Int64(25),
 		}
+		// include the last key we received (if any) to resume scanning
 		if len(lastEvaluatedKey) > 0 {
-			prettyPrintKey(lastEvaluatedKey, app)
 			input.ExclusiveStartKey = lastEvaluatedKey
 		}
 
@@ -135,14 +144,13 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 			if *result.Count == 0 {
 				return
 			}
-			// TODO: goroutine
-			writeItems(app.dstTable, library, result.Items)
 			lastEvaluatedKey = result.LastEvaluatedKey
+			go writeItems(result.Items, lastEvaluatedKey, library, app)
 		}
 	}
 }
 
-func prettyPrintKey(item map[string]*dynamodb.AttributeValue, app *appConfig) {
+func prettyPrintKey(item map[string]*dynamodb.AttributeValue, prefix string, app *appConfig, isError bool) {
 	dropWhiteSpace := func(r rune) rune {
 		if unicode.IsSpace(r) {
 			return -1
@@ -150,9 +158,17 @@ func prettyPrintKey(item map[string]*dynamodb.AttributeValue, app *appConfig) {
 		return r
 	}
 
-	format := "Checkpoint: %s=%s, %s=%s\n"
-	fmt.Printf(
+	format := "%s: %s=%s, %s=%s\n"
+
+	out := os.Stdout
+	if isError {
+		out = os.Stderr
+	}
+
+	fmt.Fprintf(
+		out,
 		format,
+		prefix,
 		app.partitionKey,
 		strings.Map(dropWhiteSpace, item[app.partitionKey].String()),
 		app.rangeKey,
