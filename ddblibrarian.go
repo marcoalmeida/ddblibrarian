@@ -545,7 +545,7 @@ func (c *Library) deleteItemWithSnapshotID(input *dynamodb.DeleteItemInput, id s
 }
 
 // add a snapshot ID to the partition key of a given attribute
-func (c *Library) addSnapshotToPartitionKey(id string, pk *dynamodb.AttributeValue) string {
+func (c *Library) addSnapshotToPartitionKey(snapshotID string, pk *dynamodb.AttributeValue) string {
 	// extract the value of the partition key (depends on the type)
 	originalKey := ""
 	if c.partitionKeyType == "S" {
@@ -554,8 +554,13 @@ func (c *Library) addSnapshotToPartitionKey(id string, pk *dynamodb.AttributeVal
 		originalKey = *pk.N
 	}
 
+	// just skip it if there's no snapshot ID
+	if snapshotID == "" {
+		return originalKey
+	}
+
 	// create the new partition key which include the snapshot and update the attribute
-	snapshotKey := fmt.Sprintf("%s%s%s", id, snapshotDelimiter, originalKey)
+	snapshotKey := fmt.Sprintf("%s%s%s", snapshotID, snapshotDelimiter, originalKey)
 	if c.partitionKeyType == "S" {
 		pk.SetS(snapshotKey)
 	} else {
@@ -577,7 +582,6 @@ func (c *Library) restorePartitionKey(original string, pk *dynamodb.AttributeVal
 // remove the snapshot ID from a partition key by finding the delimiter and removing everything to its left
 func (c *Library) removeSnapshotFromPartitionKey(pk *dynamodb.AttributeValue) {
 	var keyWithSnapshot *string
-	var key string
 
 	if c.partitionKeyType == "S" {
 		keyWithSnapshot = pk.S
@@ -585,15 +589,13 @@ func (c *Library) removeSnapshotFromPartitionKey(pk *dynamodb.AttributeValue) {
 		keyWithSnapshot = pk.N
 	}
 
-	key = *keyWithSnapshot
 	i := strings.Index(*keyWithSnapshot, snapshotDelimiter)
 	if i != -1 {
-		key = (*keyWithSnapshot)[i+1:]
-	}
-
-	if c.partitionKeyType == "S" {
-		pk.SetS(key)
-	} else {
-		pk.SetN(key)
+		key := (*keyWithSnapshot)[i+1:]
+		if c.partitionKeyType == "S" {
+			pk.SetS(key)
+		} else {
+			pk.SetN(key)
+		}
 	}
 }
