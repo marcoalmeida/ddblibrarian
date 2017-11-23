@@ -145,7 +145,9 @@ func writeItems(
 		//	prettyPrintKey(item, "Failed item", app, true)
 		//}
 	} else {
-		prettyPrintKey(lastEvaluatedKey, "Checkpoint", app, false)
+		if len(lastEvaluatedKey) > 0 {
+			prettyPrintKey(lastEvaluatedKey, "Checkpoint", app, false)
+		}
 	}
 }
 
@@ -183,13 +185,12 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 					log.Fatalln("Scan: failed after", maxRetries, ":", err)
 				}
 			} else {
-				// we're done
-				if *result.Count == 0 {
-					return
-				}
-				// save
 				lastEvaluatedKey = result.LastEvaluatedKey
 				go writeItems(result.Items, lastEvaluatedKey, library, app)
+				// we're done
+				if len(lastEvaluatedKey) == 0 {
+					return
+				}
 			}
 		}
 	}
