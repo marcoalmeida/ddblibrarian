@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -14,6 +16,11 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 
 	"github.com/marcoalmeida/ddblibrarian"
+)
+
+const (
+	maxRetries int = 3
+	batchSize  int = 25
 )
 
 type appConfig struct {
@@ -74,28 +81,69 @@ func connect(app *appConfig) (*dynamodb.DynamoDB, *ddblibrarian.Library) {
 	return dynamodb.New(srcSession), librarian
 }
 
+func writeBatch(
+	batch map[string][]*dynamodb.WriteRequest,
+	library *ddblibrarian.Library,
+) error {
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		_, err = library.BatchWriteItem(&dynamodb.BatchWriteItemInput{
+			RequestItems: batch,
+		})
+		if err != nil {
+			if aerr, ok := err.(awserr.Error); ok {
+				if aerr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException {
+					wait := math.Pow(2, float64(i)) * 100
+					log.Printf("BatchWriteItem: backing off for %f milliseconds\n", wait)
+					time.Sleep(time.Duration(wait) * time.Millisecond)
+					continue
+				}
+			} else {
+				// there's no point on retrying
+				return err
+			}
+		} else {
+			// the write succeeded, nothing else to do here
+			return nil
+		}
+	}
+
+	// if we've made it this far, all attempts have failed
+	return err
+}
+
 func writeItems(
 	items []map[string]*dynamodb.AttributeValue,
 	lastEvaluatedKey map[string]*dynamodb.AttributeValue,
-	library *ddblibrarian.Library, app *appConfig,
+	library *ddblibrarian.Library,
+	app *appConfig,
 ) {
+	var err error = nil
 	requests := make(map[string][]*dynamodb.WriteRequest, 0)
 
-	for _, item := range items {
-		requests[app.dstTable] = append(requests[app.dstTable], &dynamodb.WriteRequest{
-			PutRequest: &dynamodb.PutRequest{
-				Item: item,
-			}})
+	// create groups of 25 items -- max batch size
+	for i, item := range items {
+		if (i%batchSize) == 0 && i > 0 {
+			err = writeBatch(requests, library)
+			if err != nil {
+				break
+			}
+			requests = make(map[string][]*dynamodb.WriteRequest, 0)
+		} else {
+			requests[app.dstTable] = append(requests[app.dstTable], &dynamodb.WriteRequest{
+				PutRequest: &dynamodb.PutRequest{
+					Item: item,
+				}})
+		}
 	}
 
-	_, err := library.BatchWriteItem(&dynamodb.BatchWriteItemInput{
-		RequestItems: requests,
-	})
 	if err != nil {
-		log.Println("Failed to write batch:", err)
-		for _, item := range items {
-			prettyPrintKey(item, "Failed item", app, true)
-		}
+		log.Fatalln("Failed to write batch:", err)
+		// this can be quite long...
+		//for _, item := range items {
+		//	prettyPrintKey(item, "Failed item", app, true)
+		//}
 	} else {
 		prettyPrintKey(lastEvaluatedKey, "Checkpoint", app, false)
 	}
@@ -112,40 +160,37 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 	lastEvaluatedKey := make(map[string]*dynamodb.AttributeValue, 0)
 	for {
 		input := &dynamodb.ScanInput{
-			TableName: aws.String(app.srcTable),
-			// TODO: get as much as possible here and have the writer slicing it
-			// TODO: minimize the number of (Get) network calls and parallelize writes
-			Limit: aws.Int64(25),
+			TableName:      aws.String(app.srcTable),
+			ConsistentRead: aws.Bool(true),
 		}
 		// include the last key we received (if any) to resume scanning
 		if len(lastEvaluatedKey) > 0 {
 			input.ExclusiveStartKey = lastEvaluatedKey
 		}
 
-		result, err := srcTable.Scan(input)
-		if err != nil {
-			// TODO: retry (when useful)
-			if aerr, ok := err.(awserr.Error); ok {
-				switch aerr.Code() {
-				case dynamodb.ErrCodeProvisionedThroughputExceededException:
-					fmt.Println(dynamodb.ErrCodeProvisionedThroughputExceededException, aerr.Error())
-				case dynamodb.ErrCodeResourceNotFoundException:
-					fmt.Println(dynamodb.ErrCodeResourceNotFoundException, aerr.Error())
-				case dynamodb.ErrCodeInternalServerError:
-					fmt.Println(dynamodb.ErrCodeInternalServerError, aerr.Error())
-				default:
-					fmt.Println(aerr.Error())
+		for i := 0; i < maxRetries; i++ {
+			result, err := srcTable.Scan(input)
+			if err != nil {
+				if aerr, ok := err.(awserr.Error); ok {
+					if aerr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException {
+						wait := math.Pow(2, float64(i)) * 100
+						log.Printf("Scan: backing off for %f milliseconds\n", wait)
+						time.Sleep(time.Duration(wait) * time.Millisecond)
+						continue
+					}
+				} else {
+					// there's no point on retrying
+					log.Fatalln("Scan: failed after", maxRetries, ":", err)
 				}
 			} else {
-				fmt.Println(err.Error())
+				// we're done
+				if *result.Count == 0 {
+					return
+				}
+				// save
+				lastEvaluatedKey = result.LastEvaluatedKey
+				go writeItems(result.Items, lastEvaluatedKey, library, app)
 			}
-			return
-		} else {
-			if *result.Count == 0 {
-				return
-			}
-			lastEvaluatedKey = result.LastEvaluatedKey
-			go writeItems(result.Items, lastEvaluatedKey, library, app)
 		}
 	}
 }
