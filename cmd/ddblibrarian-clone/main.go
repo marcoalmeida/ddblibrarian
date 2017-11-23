@@ -2,15 +2,17 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
+	"strings"
+	"unicode"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/marcoalmeida/ddblibrarian"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"fmt"
 
+	"github.com/marcoalmeida/ddblibrarian"
 )
 
 type appConfig struct {
@@ -71,7 +73,7 @@ func connect(app *appConfig) (*dynamodb.DynamoDB, *ddblibrarian.Library) {
 	return dynamodb.New(srcSession), librarian
 }
 
-func writeItems(table string,library *ddblibrarian.Library, items []map[string]*dynamodb.AttributeValue) {
+func writeItems(table string, library *ddblibrarian.Library, items []map[string]*dynamodb.AttributeValue) {
 	requests := make(map[string][]*dynamodb.WriteRequest, 0)
 
 	for _, item := range items {
@@ -79,12 +81,13 @@ func writeItems(table string,library *ddblibrarian.Library, items []map[string]*
 			PutRequest: &dynamodb.PutRequest{
 				Item: item,
 			}})
-    }
+	}
 
 	_, err := library.BatchWriteItem(&dynamodb.BatchWriteItemInput{
 		RequestItems: requests,
 	})
 	if err != nil {
+		// TODO: print (to stderr) the list of keys that failed
 		log.Println("Failed to write batch:", err)
 	}
 }
@@ -99,18 +102,20 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 
 	lastEvaluatedKey := make(map[string]*dynamodb.AttributeValue, 0)
 	for {
-		fmt.Println("here i go")
 		input := &dynamodb.ScanInput{
-			TableName:            aws.String(app.srcTable),
-			Limit: aws.Int64(25),
+			TableName: aws.String(app.srcTable),
+			// TODO: get as much as possible here and have the writer slicing it
+			// TODO: minimize the number of (Get) network calls and parallelize writes
+			Limit:     aws.Int64(25),
 		}
-
 		if len(lastEvaluatedKey) > 0 {
+			prettyPrintKey(lastEvaluatedKey, app)
 			input.ExclusiveStartKey = lastEvaluatedKey
 		}
 
 		result, err := srcTable.Scan(input)
 		if err != nil {
+			// TODO: retry (when useful)
 			if aerr, ok := err.(awserr.Error); ok {
 				switch aerr.Code() {
 				case dynamodb.ErrCodeProvisionedThroughputExceededException:
@@ -123,26 +128,41 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 					fmt.Println(aerr.Error())
 				}
 			} else {
-				// Print the error, cast err to awserr.Error to get the Code and
-				// Message from an error.
 				fmt.Println(err.Error())
 			}
 			return
 		} else {
-			writeItems(app.dstTable, library, result.Items)
-
-			if *result.Count > 0 {
-				lastEvaluatedKey = result.LastEvaluatedKey
-			} else {
+			if *result.Count == 0 {
 				return
 			}
+			// TODO: goroutine
+			writeItems(app.dstTable, library, result.Items)
+			lastEvaluatedKey = result.LastEvaluatedKey
 		}
 	}
 }
 
+func prettyPrintKey(item map[string]*dynamodb.AttributeValue, app *appConfig) {
+	dropWhiteSpace := func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}
+
+	format := "Checkpoint: %s=%s, %s=%s\n"
+	fmt.Printf(
+		format,
+		app.partitionKey,
+		strings.Map(dropWhiteSpace, item[app.partitionKey].String()),
+		app.rangeKey,
+		strings.Map(dropWhiteSpace, item[app.rangeKey].String()),
+	)
+}
+
 func main() {
 	app := &appConfig{}
-
+	// TODO: accept LastEvaluatedKey as a parameter to allow resuming
 	flag.StringVar(&app.srcRegion, "source-region", "us-east-1", "AWS region of the source table")
 	flag.StringVar(&app.dstRegion, "destination-region", "us-east-1", "AWS region of the destination table")
 	flag.StringVar(&app.srcTable, "source", "", "Source DynamoDB table")
