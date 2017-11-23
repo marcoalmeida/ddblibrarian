@@ -106,7 +106,7 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 			TableName: aws.String(app.srcTable),
 			// TODO: get as much as possible here and have the writer slicing it
 			// TODO: minimize the number of (Get) network calls and parallelize writes
-			Limit:     aws.Int64(25),
+			Limit: aws.Int64(25),
 		}
 		if len(lastEvaluatedKey) > 0 {
 			prettyPrintKey(lastEvaluatedKey, app)
