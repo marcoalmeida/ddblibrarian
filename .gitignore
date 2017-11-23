@@ -19,3 +19,4 @@
 
 # binaries
 cmd/ddblibrarian-client/ddblibrarian-client
+cmd/ddblibrarian-clone/ddblibrarian-clone
