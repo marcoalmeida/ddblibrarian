@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	maxRetries int = 3
-	batchSize  int = 25
+	defaultMaxRetries int = 3
+	batchSize         int = 25
 )
 
 type appConfig struct {
@@ -33,6 +33,7 @@ type appConfig struct {
 	rangeKey         string
 	rangeKeyType     string
 	snapshot         string
+	maxRetries       int
 }
 
 func checkFlags(app *appConfig) {
@@ -84,6 +85,7 @@ func connect(app *appConfig) (*dynamodb.DynamoDB, *ddblibrarian.Library) {
 func writeBatch(
 	batch map[string][]*dynamodb.WriteRequest,
 	library *ddblibrarian.Library,
+	maxRetries int,
 ) error {
 	var err error
 
@@ -125,7 +127,7 @@ func writeItems(
 	// create groups of 25 items -- max batch size
 	for i, item := range items {
 		if (i%batchSize) == 0 && i > 0 {
-			err = writeBatch(requests, library)
+			err = writeBatch(requests, library, app.maxRetries)
 			if err != nil {
 				break
 			}
@@ -151,7 +153,7 @@ func writeItems(
 	}
 }
 
-func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Library) {
+func clone(srcTable *dynamodb.DynamoDB, library *ddblibrarian.Library, app *appConfig) {
 	if app.snapshot != "" {
 		err := library.Snapshot(app.snapshot)
 		if err != nil {
@@ -170,7 +172,7 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 			input.ExclusiveStartKey = lastEvaluatedKey
 		}
 
-		for i := 0; i < maxRetries; i++ {
+		for i := 0; i < app.maxRetries; i++ {
 			result, err := srcTable.Scan(input)
 			if err != nil {
 				if aerr, ok := err.(awserr.Error); ok {
@@ -182,7 +184,7 @@ func clone(app *appConfig, srcTable *dynamodb.DynamoDB, library *ddblibrarian.Li
 					}
 				} else {
 					// there's no point on retrying
-					log.Fatalln("Scan: failed after", maxRetries, ":", err)
+					log.Fatalln("Scan: failed after", app.maxRetries, ":", err)
 				}
 			} else {
 				lastEvaluatedKey = result.LastEvaluatedKey
@@ -234,9 +236,15 @@ func main() {
 	flag.StringVar(&app.rangeKey, "range-key", "", "range key")
 	flag.StringVar(&app.rangeKeyType, "range-key-type", "", "Type of range key (S or N)")
 	flag.StringVar(&app.snapshot, "snapshot", "", "Take a snapshot before starting the copy")
+	flag.IntVar(
+		&app.maxRetries,
+		"max-retries",
+		defaultMaxRetries,
+		"Maximum number of retries (with exponential backoff)",
+	)
 
 	flag.Parse()
 	checkFlags(app)
 	srcTable, librarian := connect(app)
-	clone(app, srcTable, librarian)
+	clone(srcTable, librarian, app)
 }
