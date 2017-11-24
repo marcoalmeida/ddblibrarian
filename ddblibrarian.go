@@ -474,6 +474,54 @@ func (c *Library) batchGetItemWithSnapshotID(
 	return output, err
 }
 
+// Scan wraps the Scan API operation for Amazon DynamoDB
+// (https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/#DynamoDB.Scan).
+//
+// It returns one or more items by accessing every item in a table or a secondary index and filtering by the active
+// snapshot.
+//
+// Overhead: 1RU
+func (c *Library) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	if err != nil {
+		return nil, err
+	}
+
+	// default to fetching data from the active/current snapshot (could be latest or a rollback)
+	currentSnapshotID := meta.getCurrentSnapshotID()
+	// override in case we're browsing some specific snapshot
+	if c.browsing {
+		currentSnapshotID = c.currentSnapshot
+	}
+
+	return c.scanWithSnapshotID(input, currentSnapshotID)
+}
+
+// ScanFromSnapshot returns one or more items by accessing every item in a table or a secondary index and filtering the
+// ones on the specified snapshot.
+//
+// Overhead: 1RU
+func (c *Library) ScanFromSnapshot(input *dynamodb.ScanInput, snapshot string) (*dynamodb.ScanOutput, error) {
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := meta.getSnapshotID(snapshot)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.scanWithSnapshotID(input, id)
+}
+
+func (c *Library) scanWithSnapshotID(input *dynamodb.ScanInput, id string) (*dynamodb.ScanOutput, error) {
+	// add FilterExpression (begins_with(attr, snapshot_id))
+	// call Scan
+	// remove FilterExpression
+	// return result set
+}
+
 // DeleteItem calls the DeleteItem API operation on input.
 //
 // It will start by trying to delete the item input from the active snapshot. If the item is not found, DeleteItem will
