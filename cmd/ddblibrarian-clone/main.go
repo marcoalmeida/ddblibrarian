@@ -34,6 +34,7 @@ type appConfig struct {
 	rangeKeyType     string
 	snapshot         string
 	maxRetries       int
+	showFailed       bool
 }
 
 func checkFlags(app *appConfig) {
@@ -143,9 +144,11 @@ func writeItems(
 	if err != nil {
 		log.Fatalln("Failed to write batch:", err)
 		// this can be quite long...
-		//for _, item := range items {
-		//	prettyPrintKey(item, "Failed item", app, true)
-		//}
+		if app.showFailed {
+			for _, item := range items {
+				prettyPrintKey(item, "Failed item", app, true)
+			}
+		}
 	} else {
 		if len(lastEvaluatedKey) > 0 {
 			prettyPrintKey(lastEvaluatedKey, "Checkpoint", app, false)
@@ -242,6 +245,7 @@ func main() {
 		defaultMaxRetries,
 		"Maximum number of retries (with exponential backoff)",
 	)
+	flag.BoolVar(&app.showFailed, "show-failed", false, "Print each individual key on failed writes")
 
 	flag.Parse()
 	checkFlags(app)
