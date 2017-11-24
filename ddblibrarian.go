@@ -474,6 +474,53 @@ func (c *Library) batchGetItemWithSnapshotID(
 	return output, err
 }
 
+// Query wraps the Query API operation for Amazon DynamoDB
+// (https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/#DynamoDB.Query).
+//
+// It finds items on the active snapshot based on primary key values. Use the KeyConditionExpression parameter to
+// provide a specific value for the partition key or narrow the scope of the Query operation with a comparison operator.
+//
+// Overhead: 1RU
+func (c *Library) Query(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	if err != nil {
+		return nil, err
+	}
+
+	// default to fetching data from the active/current snapshot (could be latest or a rollback)
+	currentSnapshotID := meta.getCurrentSnapshotID()
+	// override in case we're browsing some specific snapshot
+	if c.browsing {
+		currentSnapshotID = c.currentSnapshot
+	}
+
+	return c.queryWithSnapshotID(input, currentSnapshotID)
+}
+
+// QueryFromSnapshot items on a given snapshot based on primary key values. Use the KeyConditionExpression parameter to
+// provide a specific value for the partition key or narrow the scope of the Query operation with a comparison operator.
+//
+// Overhead: 1RU
+func (c *Library) QueryFromSnapshot(input *dynamodb.QueryInput, snapshot string) (*dynamodb.QueryOutput, error) {
+	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := meta.getSnapshotID(snapshot)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.queryWithSnapshotID(input, id)
+}
+
+func (c *Library) queryWithSnapshotID(input *dynamodb.QueryInput, id string) (*dynamodb.QueryOutput, error) {
+	// copy input
+	// add KeyConditionExpression to the local copy
+	// drop snapshot ID prefix from results
+}
+
 // DeleteItem calls the DeleteItem API operation on input.
 //
 // It will start by trying to delete the item input from the active snapshot. If the item is not found, DeleteItem will
