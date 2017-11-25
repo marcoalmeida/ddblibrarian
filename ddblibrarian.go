@@ -28,6 +28,7 @@ package ddblibrarian
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -480,6 +481,11 @@ func (c *Library) batchGetItemWithSnapshotID(
 // It returns one or more items by accessing every item in a table or a secondary index and filtering by the active
 // snapshot.
 //
+// If no snapshots exist, no filtering based on snapshots will be performed.
+//
+// Warning: this operation will read the whole table and filter out items that do not match the active snapshot
+// before returning the data.
+//
 // Overhead: 1RU
 func (c *Library) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
@@ -500,6 +506,13 @@ func (c *Library) Scan(input *dynamodb.ScanInput) (*dynamodb.ScanOutput, error) 
 // ScanFromSnapshot returns one or more items by accessing every item in a table or a secondary index and filtering the
 // ones on the specified snapshot.
 //
+// If snapshot is an empty string, items from all available snapshots will be returned.
+//
+// If input includes the partition key in ExpressionAttributeValues, it *must* be named ":pk".
+//
+// Warning: this operation will read the whole table and filter out items that do not match the specified snapshot
+// before returning the data.
+//
 // Overhead: 1RU
 func (c *Library) ScanFromSnapshot(input *dynamodb.ScanInput, snapshot string) (*dynamodb.ScanOutput, error) {
 	meta, err := newMeta(c.svc, c.tableName, c.partitionKey, c.partitionKeyType, c.rangeKey, c.rangeKeyType)
@@ -516,10 +529,76 @@ func (c *Library) ScanFromSnapshot(input *dynamodb.ScanInput, snapshot string) (
 }
 
 func (c *Library) scanWithSnapshotID(input *dynamodb.ScanInput, id string) (*dynamodb.ScanOutput, error) {
-	// add FilterExpression (begins_with(attr, snapshot_id))
-	// call Scan
-	// remove FilterExpression
-	// return result set
+	// don't destroy the user provided input (unlike other cases, undoing changes here is tricky so we just make
+	// a copy)
+	inputCopy := *input
+	// make sure the map is not nil before assigning a new value
+	if inputCopy.ExpressionAttributeValues == nil {
+		inputCopy.ExpressionAttributeValues = make(map[string]*dynamodb.AttributeValue, 0)
+	} else {
+		// add the snapshot ID to the partition key
+		_, ok := inputCopy.ExpressionAttributeValues[":pk"]
+		if ok {
+			c.addSnapshotToPartitionKey(id, inputCopy.ExpressionAttributeValues[":pk"])
+		}
+	}
+	// we always need to filter out the row used to store our metadata
+	if c.partitionKeyType == "S" {
+		inputCopy.ExpressionAttributeValues[":metaPK"] = &dynamodb.AttributeValue{
+			S: aws.String(ddbPartitionKey),
+		}
+	} else {
+		inputCopy.ExpressionAttributeValues[":metaPK"] = &dynamodb.AttributeValue{
+			N: aws.String(ddbPartitionKey),
+		}
+	}
+	filterStr := fmt.Sprintf("%s <> :metaPK", c.partitionKey)
+	// if no snapshot was specified, there's no need for further filtering
+	if id != "" {
+		// different data types require different approaches to filtering
+		if c.partitionKeyType == "S" {
+			inputCopy.ExpressionAttributeValues[":prefix"] = &dynamodb.AttributeValue{
+				S: aws.String(getSnapshotPrefix(id)),
+			}
+			filterStr += fmt.Sprintf(" AND begins_with(%s, :prefix)", c.partitionKey)
+		} else {
+			idInt, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				return nil, errors.New("failed to convert snapshot ID to integer: " + err.Error())
+			}
+			inputCopy.ExpressionAttributeValues[":currentID"] = &dynamodb.AttributeValue{
+				N: aws.String(id),
+			}
+			inputCopy.ExpressionAttributeValues[":nextID"] = &dynamodb.AttributeValue{
+				N: aws.String(strconv.Itoa(int(idInt + 1))),
+			}
+			filterStr += fmt.Sprintf(
+				" AND %s >= :currentID AND %s < :nextID",
+				c.partitionKey,
+				c.partitionKey,
+			)
+		}
+	}
+
+	// make sure the FilterExpression has been initialized and is ready for us to concatenate the rule that
+	// filters a snapshot
+	if input.FilterExpression == nil {
+		inputCopy.FilterExpression = aws.String(filterStr)
+	} else {
+		inputCopy.FilterExpression = aws.String(*inputCopy.FilterExpression + " AND " + filterStr)
+	}
+
+	out, err := c.svc.Scan(&inputCopy)
+	if err != nil {
+		return nil, err
+	}
+
+	// remove the snapshot id from keys that have not been processed
+	for _, item := range out.Items {
+		c.removeSnapshotFromPartitionKey(item[c.partitionKey])
+	}
+
+	return out, err
 }
 
 // DeleteItem calls the DeleteItem API operation on input.
@@ -608,7 +687,7 @@ func (c *Library) addSnapshotToPartitionKey(snapshotID string, pk *dynamodb.Attr
 	}
 
 	// create the new partition key which include the snapshot and update the attribute
-	snapshotKey := fmt.Sprintf("%s%s%s", snapshotID, snapshotDelimiter, originalKey)
+	snapshotKey := fmt.Sprintf("%s%s", getSnapshotPrefix(snapshotID), originalKey)
 	if c.partitionKeyType == "S" {
 		pk.SetS(snapshotKey)
 	} else {
@@ -646,4 +725,8 @@ func (c *Library) removeSnapshotFromPartitionKey(pk *dynamodb.AttributeValue) {
 			pk.SetN(key)
 		}
 	}
+}
+
+func getSnapshotPrefix(snapshotID string) string {
+	return fmt.Sprintf("%s%s", snapshotID, snapshotDelimiter)
 }

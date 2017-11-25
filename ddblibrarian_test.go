@@ -872,6 +872,131 @@ func TestLibrary_DeleteItem(t *testing.T) {
 	}
 }
 
+func TestLibrary_Scan(t *testing.T) {
+	for _, schema := range possibleSchemas {
+		library, teardown := setupTest(schema, t)
+
+		// table does not exist, expect to fail
+		input := &dynamodb.ScanInput{
+			TableName: aws.String("nope"),
+		}
+		_, err := library.Scan(input)
+		if err == nil {
+			t.Error("expected error as table does not exist")
+		}
+
+		// should not fail but no items exist
+		input = &dynamodb.ScanInput{
+			TableName: aws.String(getTableName(schema)),
+		}
+		out, err := library.Scan(input)
+		if err != nil {
+			t.Error("expected no errors, got", err)
+		}
+		// expect an empty return value as the item did not exist
+		if len(out.Items) > 0 {
+			t.Error("expected empty result, got", out)
+		}
+
+		// save a few items, always take a snapshot before
+		values := make(map[int]string, 0)
+		nItems := 3
+		for i := 0; i < nItems; i++ {
+			err := library.Snapshot(strconv.Itoa(i))
+			if err != nil {
+				t.Error(err)
+			}
+			inputPut := &dynamodb.PutItemInput{
+				TableName: aws.String(getTableName(schema)),
+				Item:      getAttributeValueForItem(schema, fmt.Sprintf("data_%d", i)),
+			}
+			values[i] = *inputPut.Item[valueField].S
+			_, err = library.PutItem(inputPut)
+			if err != nil {
+				t.Error(err)
+			}
+		}
+		// simple scan should return exactly one element -- the last one
+		input = &dynamodb.ScanInput{
+			TableName: aws.String(getTableName(schema)),
+		}
+		out, err = library.Scan(input)
+		if err != nil {
+			t.Error("expected no errors, got:", err)
+		}
+		if len(out.Items) != 1 {
+			t.Error("expected exactly 1 item, got", out.Items)
+		} else {
+			if *out.Items[0][valueField].S != values[2] {
+				t.Error("expected most recent item:", values[2], ", got:", *out.Items[0][valueField].S)
+			}
+		}
+		// scan with an empty snapshot should return all items
+		out, err = library.ScanFromSnapshot(input, "")
+		if err != nil {
+			t.Error("expected no errors, got:", err)
+		}
+		if len(out.Items) != nItems {
+			t.Error("expected exactly", nItems, " items, got", len(out.Items))
+		} else {
+			for i := 0; i < 3; i++ {
+				match := false
+				for _, v := range values {
+					if *out.Items[i][valueField].S == v {
+						match = true
+						break
+					}
+				}
+				if !match {
+					t.Error("could not find",
+						*out.Items[i][valueField].S,
+					)
+				}
+			}
+		}
+
+		// snapshot does not exist -- expect an error
+		_, err = library.ScanFromSnapshot(input, "nothing here")
+		if err == nil {
+			t.Error("Snapshot does not exist, expected an error")
+		}
+
+		// while browsing -- first item written
+		library.Browse("0")
+		input = &dynamodb.ScanInput{
+			TableName: aws.String(getTableName(schema)),
+		}
+		out, err = library.Scan(input)
+		if err != nil {
+			t.Error("expected no errors, got:", err)
+		}
+		if len(out.Items) != 1 {
+			t.Error("expected exactly 1 item, got", out.Items)
+		} else {
+			if *out.Items[0][valueField].S != values[0] {
+				t.Error("expected most recent item:", values[0], ", got:", *out.Items[0][valueField].S)
+			}
+		}
+
+		// back the most recent item, using a FilterExpression on input -- using something expect to return an
+		// empty set
+		library.StopBrowsing()
+		input.ExpressionAttributeValues = map[string]*dynamodb.AttributeValue{
+			":pk": getAttributeValueForKey(schema)[partitionKey],
+		}
+		input.FilterExpression = aws.String(fmt.Sprintf("%s <> :pk", partitionKey))
+		out, err = library.Scan(input)
+		if err != nil {
+			t.Error("expected no errors, got:", err)
+		}
+		if len(out.Items) != 0 {
+			t.Error("expected no items, got", out.Items)
+		}
+
+		teardown(schema, t)
+	}
+}
+
 func TestLibrary_GeneralUsage(t *testing.T) {
 	for _, schema := range possibleSchemas {
 		library := make([]*Library, 2)
