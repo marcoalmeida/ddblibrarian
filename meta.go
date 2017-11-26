@@ -238,7 +238,7 @@ func (s *config) GetChronologicalSnapshotIDs(first string) []string {
 	case "":
 		// just to avoid unnecessary loops as a minor performance improvement this really means "none" because there
 		// are no snapshots before the first one was even taken
-		return []string{""}
+		return []string{}
 	case snapshotLatest:
 		first = s.latestSnapshotID
 	case snapshotCurrent:
@@ -286,7 +286,7 @@ func (s *config) getSnapshotID(snapshot string) (string, error) {
 // getCurrentSnapshotID returns the ID of the snapshot currently set as active
 // This can be the most recent one, or some past snapshot in the case of a rollback
 func (s *config) getCurrentSnapshotID() string {
-	// snapshots exist because latest != "", so current == "" means we rolled back to "" (before any snapshots)
+	// snapshots exist iff latest != "", so current == "" means we rolled back to "" (before any snapshots)
 	if s.currentSnapshotID == "" && s.latestSnapshotID != "" {
 		return ""
 	}
