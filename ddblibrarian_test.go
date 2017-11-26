@@ -679,7 +679,27 @@ func TestBatchGetItem(t *testing.T) {
 			t.Error("Expected error as table does not exist")
 		}
 
-		// should not fail but does not exist
+		// error on more than 1 table
+		input = &dynamodb.BatchGetItemInput{
+			RequestItems: map[string]*dynamodb.KeysAndAttributes{
+				"doesnotexist": {
+					Keys: []map[string]*dynamodb.AttributeValue{
+						getAttributeValueForKey(schema),
+					},
+				},
+				"doesnotexist2": {
+					Keys: []map[string]*dynamodb.AttributeValue{
+						getAttributeValueForKey(schema),
+					},
+				},
+			},
+		}
+		_, err = library.BatchGetItemFromSnapshot(input, "")
+		if err == nil {
+			t.Error("Expected error as table does not exist")
+		}
+
+		// should not fail but the item does not exist
 		input = &dynamodb.BatchGetItemInput{
 			RequestItems: map[string]*dynamodb.KeysAndAttributes{
 				getTableName(schema): {
@@ -687,8 +707,7 @@ func TestBatchGetItem(t *testing.T) {
 						getAttributeValueForKey(schema),
 					},
 				}}}
-
-		out, err := library.BatchGetItemFromSnapshot(input, "")
+		out, err := library.BatchGetItem(input)
 		if err != nil {
 			t.Error("expected no errors, got", err)
 		}
@@ -702,7 +721,8 @@ func TestBatchGetItem(t *testing.T) {
 
 		// save a few items, always take a snapshot
 		values := make(map[int]string, 0)
-		for i := 0; i < 3; i++ {
+		nItems := 3
+		for i := 0; i < nItems; i++ {
 			inputPut := &dynamodb.PutItemInput{
 				TableName: aws.String(getTableName(schema)),
 				Item:      getAttributeValueForItem(schema, fmt.Sprintf("data_%d", i)),
@@ -711,7 +731,8 @@ func TestBatchGetItem(t *testing.T) {
 			library.PutItem(inputPut)
 			library.Snapshot(strconv.Itoa(i))
 		}
-		// Get the most recent element
+
+		// get the most recent (last to be written) element
 		input = &dynamodb.BatchGetItemInput{
 			RequestItems: map[string]*dynamodb.KeysAndAttributes{
 				getTableName(schema): {
@@ -726,15 +747,15 @@ func TestBatchGetItem(t *testing.T) {
 		attrs, ok := out.Responses[getTableName(schema)]
 		if ok {
 			for _, k := range attrs {
-				if *k[valueField].S != values[2] {
-					t.Error("expected most recent item:", values[2], ", got:", *k[valueField].S)
+				if *k[valueField].S != values[nItems-1] {
+					t.Error("expected most recent item:", values[nItems-1], ", got:", *k[valueField].S)
 				}
 			}
 		} else {
 			t.Error("Failed to get items from the table")
 		}
 
-		// Get the initial value, before any snapshots
+		// get from a specific snapshot -- using snapshot 1, taken after writing values[1], so expect values[2]
 		input = &dynamodb.BatchGetItemInput{
 			RequestItems: map[string]*dynamodb.KeysAndAttributes{
 				getTableName(schema): {
@@ -742,7 +763,32 @@ func TestBatchGetItem(t *testing.T) {
 						getAttributeValueForKey(schema),
 					},
 				}}}
-		out, err = library.BatchGetItemFromSnapshot(input, "")
+		out, err = library.BatchGetItemFromSnapshot(input, "1")
+		if err != nil {
+			t.Error("expected no errors, got:", err)
+		}
+		attrs, ok = out.Responses[getTableName(schema)]
+		if ok {
+			for _, k := range attrs {
+				if *k[valueField].S != values[2] {
+					t.Error("expected item from snapshot 1:", values[2], ", got:", *k[valueField].S)
+				}
+			}
+		} else {
+			t.Error("Failed to get items from the table")
+		}
+
+		// get the default element while browsing -- browsing to empty snapshot to cover that as well, so expect the
+		// first item to be written
+		library.Browse("")
+		input = &dynamodb.BatchGetItemInput{
+			RequestItems: map[string]*dynamodb.KeysAndAttributes{
+				getTableName(schema): {
+					Keys: []map[string]*dynamodb.AttributeValue{
+						getAttributeValueForKey(schema),
+					},
+				}}}
+		out, err = library.BatchGetItem(input)
 		if err != nil {
 			t.Error("expected no errors, got:", err)
 		}
@@ -750,7 +796,7 @@ func TestBatchGetItem(t *testing.T) {
 		if ok {
 			for _, k := range attrs {
 				if *k[valueField].S != values[0] {
-					t.Error("expected most recent item:", values[0], ", got:", *k[valueField].S)
+					t.Error("expected oldest item:", values[0], ", got:", *k[valueField].S)
 				}
 			}
 		} else {
