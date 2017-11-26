@@ -368,7 +368,7 @@ func (c *Library) getItemWithSnapshotID(input *dynamodb.GetItemInput, id string)
 	return item, err
 }
 
-// BatchWriteItem wraps the BatchGetItem API operation for Amazon DynamoDB
+// BatchGetItem wraps the BatchGetItem API operation for Amazon DynamoDB
 // (https://docs.aws.amazon.com/sdk-for-go/api/service/dynamodb/#DynamoDB.BatchGetItem).
 //
 // It retrieves the attributes of one or more items from, identified by primary key.

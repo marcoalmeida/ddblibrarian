@@ -661,7 +661,6 @@ func TestLibrary_GetItem(t *testing.T) {
 	}
 }
 
-// TODO: actually fetch more than 1 item
 func TestBatchGetItem(t *testing.T) {
 	for _, schema := range possibleSchemas {
 		library, teardown := setupTest(schema, t)
@@ -674,7 +673,7 @@ func TestBatchGetItem(t *testing.T) {
 						getAttributeValueForKey(schema),
 					},
 				}}}
-		_, err := library.BatchGetItemFromSnapshot(input, "")
+		_, err := library.BatchGetItem(input)
 		if err == nil {
 			t.Error("Expected error as table does not exist")
 		}
@@ -694,9 +693,9 @@ func TestBatchGetItem(t *testing.T) {
 				},
 			},
 		}
-		_, err = library.BatchGetItemFromSnapshot(input, "")
+		_, err = library.BatchGetItem(input)
 		if err == nil {
-			t.Error("Expected error as table does not exist")
+			t.Error("Expected error when using multiple tables")
 		}
 
 		// should not fail but the item does not exist
@@ -801,6 +800,105 @@ func TestBatchGetItem(t *testing.T) {
 			}
 		} else {
 			t.Error("Failed to get items from the table")
+		}
+
+		teardown(schema, t)
+	}
+}
+
+func TestLibrary_BatchWriteItem(t *testing.T) {
+	for _, schema := range possibleSchemas {
+		library, teardown := setupTest(schema, t)
+
+		// table does not exist, expect to fail
+		input := &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]*dynamodb.WriteRequest{
+				"doesnotexist": {
+					&dynamodb.WriteRequest{
+						PutRequest: &dynamodb.PutRequest{
+							Item: getAttributeValueForKey(schema),
+						},
+					},
+				}}}
+		_, err := library.BatchWriteItem(input)
+		if err == nil {
+			t.Error("Expected error as table does not exist")
+		}
+
+		// error on more than 1 table
+		input = &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]*dynamodb.WriteRequest{
+				"doesnotexist": {
+					&dynamodb.WriteRequest{
+						PutRequest: &dynamodb.PutRequest{
+							Item: getAttributeValueForKey(schema),
+						},
+					},
+				},
+				"doesnotexist2": {
+					&dynamodb.WriteRequest{
+						PutRequest: &dynamodb.PutRequest{
+							Item: getAttributeValueForKey(schema),
+						},
+					},
+				}}}
+		_, err = library.BatchWriteItem(input)
+		if err == nil {
+			t.Error("Expected error when using multiple tables")
+		}
+
+		batchData := "Some string"
+		// write something, make sure it's there
+		input = &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]*dynamodb.WriteRequest{
+				getTableName(schema): {
+					&dynamodb.WriteRequest{
+						PutRequest: &dynamodb.PutRequest{
+							Item: getAttributeValueForItem(schema, batchData),
+						},
+					},
+				},
+			}}
+		_, err = library.BatchWriteItem(input)
+		if err != nil {
+			t.Error(err)
+		}
+		// read it and make sure it's the same
+		inputGet := &dynamodb.GetItemInput{
+			TableName: aws.String(getTableName(schema)),
+			Key:       getAttributeValueForKey(schema),
+		}
+		out, err := library.GetItem(inputGet)
+		if err != nil {
+			t.Error("expected no errors, got:", err)
+		}
+		if *out.Item[valueField].S != fmtValueTag(batchData) {
+			t.Error("expected:", fmtValueTag(batchData), ", got:", *out.Item[valueField].S)
+		}
+
+		// delete the item
+		input = &dynamodb.BatchWriteItemInput{
+			RequestItems: map[string][]*dynamodb.WriteRequest{
+				getTableName(schema): {
+					&dynamodb.WriteRequest{
+						DeleteRequest: &dynamodb.DeleteRequest{
+							Key: getAttributeValueForKey(schema),
+						},
+					},
+				},
+			}}
+		_, err = library.BatchWriteItem(input)
+		// read it and make sure it's gone
+		inputGet = &dynamodb.GetItemInput{
+			TableName: aws.String(getTableName(schema)),
+			Key:       getAttributeValueForKey(schema),
+		}
+		out, err = library.GetItem(inputGet)
+		if err != nil {
+			t.Error("expected no errors, got:", err)
+		}
+		if out.Item != nil {
+			t.Error("expected the item not to exist, got:", *out.Item[valueField].S)
 		}
 
 		teardown(schema, t)
