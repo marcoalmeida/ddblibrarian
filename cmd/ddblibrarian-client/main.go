@@ -23,7 +23,7 @@ type appConfig struct {
 	rollback         string
 }
 
-// because a modern language like Go does not need to support optional/required flags...
+// make sure all required flags were passed and are valid
 func checkFlags(app *appConfig) {
 	if app.table == "" {
 		log.Fatal("Please tell me which DynamoDB table to use")
@@ -67,7 +67,7 @@ func connect(app *appConfig) *ddblibrarian.Library {
 	return client
 }
 
-func thingThatDoesTheStuff(app *appConfig, library *ddblibrarian.Library) {
+func executeActions(library *ddblibrarian.Library, app *appConfig) {
 	if app.rollback != "" {
 		err := library.Rollback(app.rollback)
 		if err != nil {
@@ -116,5 +116,5 @@ func main() {
 	checkFlags(app)
 
 	library := connect(app)
-	thingThatDoesTheStuff(app, library)
+	executeActions(library, app)
 }
