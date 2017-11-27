@@ -192,11 +192,14 @@ func clone(srcTable *dynamodb.DynamoDB, library *ddblibrarian.Library, app *appC
 			} else {
 				lastEvaluatedKey = result.LastEvaluatedKey
 				go writeItems(result.Items, lastEvaluatedKey, library, app)
-				// we're done
-				if len(lastEvaluatedKey) == 0 {
-					return
-				}
+				// the API call succeeded, we can break the retry loop
+				break
 			}
+		}
+
+		// we're done
+		if len(lastEvaluatedKey) == 0 {
+			return
 		}
 	}
 }
