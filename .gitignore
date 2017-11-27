@@ -20,3 +20,4 @@
 # binaries
 cmd/ddblibrarian-client/ddblibrarian-client
 cmd/ddblibrarian-clone/ddblibrarian-import
+cmd/ddblibrarian-diff/ddblibrarian-diff
